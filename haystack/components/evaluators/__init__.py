@@ -9,6 +9,7 @@ from lazy_imports import LazyImporter
 
 _import_structure = {
     "answer_exact_match": ["AnswerExactMatchEvaluator"],
+    "answer_f1": ["AnswerF1Evaluator"],
     "context_relevance": ["ContextRelevanceEvaluator"],
     "document_map": ["DocumentMAPEvaluator"],
     "document_mrr": ["DocumentMRREvaluator"],
@@ -21,6 +22,7 @@ _import_structure = {
 
 if TYPE_CHECKING:
     from .answer_exact_match import AnswerExactMatchEvaluator as AnswerExactMatchEvaluator
+    from .answer_f1 import AnswerF1Evaluator as AnswerF1Evaluator
     from .context_relevance import ContextRelevanceEvaluator as ContextRelevanceEvaluator
     from .document_map import DocumentMAPEvaluator as DocumentMAPEvaluator
     from .document_mrr import DocumentMRREvaluator as DocumentMRREvaluator
