@@ -15,6 +15,10 @@ logger = logging.getLogger(__name__)
 
 with LazyImport("Run 'pip install trafilatura'") as trafilatura_import:
     from trafilatura import extract
+    from trafilatura import extract_metadata as trafilatura_extract_metadata
+
+# Page metadata fields copied from Trafilatura into the Document meta when `extract_metadata=True`.
+_PAGE_METADATA_FIELDS = ("title", "author", "date", "description", "sitename")
 
 
 @component
@@ -33,6 +37,15 @@ class HTMLToDocument:
     print(documents[0].content)
     # >> 'This is a text from the HTML file.'
     ```
+
+    To also store the page title, author, date, description and site name in the Document metadata:
+    ```python
+    converter = HTMLToDocument(extract_metadata=True)
+    results = converter.run(sources=["test/test_files/html/paul_graham_superlinear.html"])
+
+    print(results["documents"][0].meta)
+    # >> {'file_path': 'paul_graham_superlinear.html', 'title': 'Superlinear Returns', 'date': '2023-01-01'}
+    ```
     """
 
     def __init__(
@@ -40,6 +53,8 @@ class HTMLToDocument:
         extraction_kwargs: dict[str, Any] | None = None,
         store_full_path: bool = False,
         encoding: str | None = None,
+        *,
+        extract_metadata: bool = False,
     ) -> None:
         """
         Create an HTMLToDocument component.
@@ -54,12 +69,17 @@ class HTMLToDocument:
             The encoding to use when decoding HTML files. If None (the default), Trafilatura detects the encoding.
             If detection produces incorrect characters, install `trafilatura[all]` for additional encoding detection
             support, or set this parameter if you know the encoding.
+        :param extract_metadata:
+            If True, the page metadata found in the HTML (title, author, date, description and site name) is added to
+            the metadata of the document. Fields that can't be found are left out. The document content is not
+            changed. Values passed in `meta` take precedence over the page metadata.
         """
         trafilatura_import.check()
 
         self.extraction_kwargs = extraction_kwargs or {}
         self.store_full_path = store_full_path
         self.encoding = encoding
+        self.extract_metadata = extract_metadata
 
     def to_dict(self) -> dict[str, Any]:
         """
@@ -69,7 +89,11 @@ class HTMLToDocument:
             Dictionary with serialized data.
         """
         return default_to_dict(
-            self, extraction_kwargs=self.extraction_kwargs, store_full_path=self.store_full_path, encoding=self.encoding
+            self,
+            extraction_kwargs=self.extraction_kwargs,
+            store_full_path=self.store_full_path,
+            encoding=self.encoding,
+            extract_metadata=self.extract_metadata,
         )
 
     @classmethod
@@ -143,7 +167,8 @@ class HTMLToDocument:
                 logger.warning("No text could be extracted from {source}. Skipping it.", source=source)
                 continue
 
-            merged_metadata = {**bytestream.meta, **metadata}
+            page_metadata = self._extract_page_metadata(html_content, source) if self.extract_metadata else {}
+            merged_metadata = {**bytestream.meta, **page_metadata, **metadata}
 
             if not self.store_full_path and "file_path" in bytestream.meta:
                 file_path = bytestream.meta.get("file_path")
@@ -154,3 +179,24 @@ class HTMLToDocument:
             documents.append(document)
 
         return {"documents": documents}
+
+    @staticmethod
+    def _extract_page_metadata(html_content: str | bytes, source: str | Path | ByteStream) -> dict[str, Any]:
+        """
+        Extracts the page metadata (title, author, date, description and site name) from an HTML page.
+
+        :param html_content: The HTML page, as a string or as bytes.
+        :param source: The source of the HTML page, used in the warning if the extraction fails.
+        :returns: A dictionary with the metadata fields that were found. Missing fields are left out.
+        """
+        try:
+            extracted = trafilatura_extract_metadata(html_content)
+        except Exception as error:
+            logger.warning("Could not extract page metadata from {source}. Error: {error}", source=source, error=error)
+            return {}
+
+        if extracted is None:
+            return {}
+
+        page_metadata = extracted.as_dict()
+        return {field: page_metadata[field] for field in _PAGE_METADATA_FIELDS if page_metadata.get(field)}
