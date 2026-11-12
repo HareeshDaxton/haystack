@@ -394,6 +394,7 @@ export default {
           },
           items: [
             'pipeline-components/evaluators/answerexactmatchevaluator',
+            'pipeline-components/evaluators/answerf1evaluator',
             'pipeline-components/evaluators/contextrelevanceevaluator',
             'pipeline-components/evaluators/deepevalevaluator',
             'pipeline-components/evaluators/documentmapevaluator',
