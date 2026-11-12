@@ -1,6 +1,6 @@
 loaders:
   - search_path: [../haystack/components/evaluators]
-    modules: ["answer_exact_match", "context_relevance", "document_map", "document_mrr",
+    modules: ["answer_exact_match", "answer_f1", "context_relevance", "document_map", "document_mrr",
       "document_ndcg", "document_recall", "faithfulness", "llm_evaluator", "sas_evaluator"]
 processors:
   - type: filter
