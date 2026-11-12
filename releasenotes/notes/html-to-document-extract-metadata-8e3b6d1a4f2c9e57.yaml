@@ -1,0 +1,7 @@
+---
+features:
+  - |
+    Added the ``extract_metadata`` init parameter to ``HTMLToDocument``. When set to ``True``, the page title,
+    author, date, description and site name found in the HTML are added to ``Document.meta``, so you can show
+    readable citations or filter documents by date. Fields that can't be found are left out and the document
+    content doesn't change. It defaults to ``False``, so existing pipelines produce the same output.
