@@ -29,6 +29,18 @@ The `HTMLToDocument` component converts HTML files into documents. It can be use
 
 When you initialize the component, you can optionally set  `extraction_kwargs`,  a dictionary containing keyword arguments to customize the extraction process. These are passed to the underlying Trafilatura `extract` function. For the full list of available arguments, see the [Trafilatura documentation](https://trafilatura.readthedocs.io/en/latest/corefunctions.html#extract).
 
+### Page metadata
+
+Set `extract_metadata=True` to add the page title, author, date, description and site name found in the HTML to the document metadata. Fields that can't be found are left out, and the document content doesn't change. Values you pass in `meta` take precedence. This is useful to show readable sources, for example the page title instead of a file name, or to filter documents by date.
+
+```python
+converter = HTMLToDocument(extract_metadata=True)
+docs = converter.run(sources=[Path("saved_page.html")])["documents"]
+
+print(docs[0].meta)
+# >> {'file_path': 'saved_page.html', 'title': 'Superlinear Returns', 'date': '2023-01-01'}
+```
+
 ### Character encoding
 
 By default, `HTMLToDocument` lets Trafilatura detect the HTML encoding and extract the text (`encoding=None`). If the result contains incorrect characters, you can install `trafilatura[all]`, which includes an additional encoding detector:
