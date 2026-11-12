@@ -1,0 +1,9 @@
+---
+features:
+  - |
+    Add ``AnswerF1Evaluator`` to score predicted answers against ground truth answers with the token-level F1 score
+    used in the SQuAD benchmark. Unlike ``AnswerExactMatchEvaluator``, it gives partial credit when the two answers
+    share some of their words, for example "Eiffel Tower" and "the Eiffel Tower in Paris" score 0.67 instead of 0.
+    Unlike ``SASEvaluator``, it needs no model. By default, answers are lowercased and punctuation, the articles
+    "a", "an", and "the", and extra whitespace are removed before comparison. Set ``normalize=False`` to only split
+    the answers on whitespace.
