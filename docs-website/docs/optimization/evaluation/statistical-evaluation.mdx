@@ -47,3 +47,7 @@ Mean average precision is similar to mean reciprocal rank but takes into account
 ### [AnswerExactMatchEvaluator](../../pipeline-components/evaluators/answerexactmatchevaluator.mdx)
 
 Exact match measures the proportion of cases where the predicted Answer is identical to the correct Answer. For example, for the annotated question-answer pair “What is Haystack?" + "A question answering library in Python”, even a predicted answer like “A Python question answering library” would yield a zero score because it does not match the expected answer 100%.
+
+### [AnswerF1Evaluator](../../pipeline-components/evaluators/answerf1evaluator.mdx)
+
+The F1 score gives partial credit when a predicted Answer shares some, but not all, of its words with the correct Answer. It is the harmonic mean of precision (the share of predicted words that are in the correct Answer) and recall (the share of correct words that are in the predicted Answer). For the example above, the predicted answer “A Python question answering library” gets an F1 score of about 0.89 instead of zero, because it contains four of the five words of the correct answer, ignoring the article “a”.
