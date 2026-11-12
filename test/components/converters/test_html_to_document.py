@@ -14,11 +14,21 @@ from haystack.dataclasses import ByteStream
 
 class TestHTMLToDocument:
     def test_serde(self):
-        converter = HTMLToDocument(encoding="utf-8")
+        converter = HTMLToDocument(encoding="utf-8", extract_metadata=True)
         serde_data = converter.to_dict()
+        assert serde_data["init_parameters"]["extract_metadata"] is True
         new_converter = HTMLToDocument.from_dict(serde_data)
         assert new_converter.extraction_kwargs == converter.extraction_kwargs
         assert new_converter.encoding == converter.encoding
+        assert new_converter.extract_metadata is True
+
+    def test_from_dict_without_extract_metadata(self):
+        data = {
+            "type": "haystack.components.converters.html.HTMLToDocument",
+            "init_parameters": {"extraction_kwargs": {}, "store_full_path": False, "encoding": None},
+        }
+        converter = HTMLToDocument.from_dict(data)
+        assert converter.extract_metadata is False
 
     @pytest.mark.parametrize("meta", [{"test": "TEST"}, [{"test": "TEST"}]], ids=["dict", "list"])
     def test_run(self, test_files_path, meta):
@@ -215,3 +225,77 @@ class TestHTMLToDocument:
         assert results["documents"] == []
         mock_extract.assert_not_called()
         assert "because it is empty" in caplog.text
+
+    def test_run_with_extract_metadata(self, test_files_path):
+        sources = [test_files_path / "html" / "what_is_haystack.html"]
+        default_doc = HTMLToDocument().run(sources=sources)["documents"][0]
+
+        doc = HTMLToDocument(extract_metadata=True).run(sources=sources)["documents"][0]
+
+        assert doc.content == default_doc.content
+        assert doc.meta["file_path"] == "what_is_haystack.html"
+        assert doc.meta["title"] == "What is Haystack? | Haystack"
+        assert doc.meta["description"].startswith("Haystack is an open source Python framework")
+        assert doc.meta["sitename"] == "Haystack"
+        assert "author" not in doc.meta
+
+    def test_run_with_extract_metadata_and_explicit_encoding(self):
+        html = (
+            "<html><head><title>Café guide</title><meta name='author' content='Zoë Müller'></head>"
+            "<body><p>The best café in town.</p></body></html>"
+        ).encode("latin-1")
+        converter = HTMLToDocument(encoding="latin-1", extract_metadata=True)
+
+        doc = converter.run(sources=[ByteStream(data=html)])["documents"][0]
+
+        assert doc.content == "The best café in town."
+        assert doc.meta["title"] == "Café guide"
+        assert doc.meta["author"] == "Zoë Müller"
+
+    def test_run_with_extract_metadata_user_meta_takes_precedence(self, test_files_path):
+        with open(test_files_path / "html" / "what_is_haystack.html", "rb") as file:
+            stream = ByteStream(file.read(), meta={"url": "test_url", "title": "Title from ByteStream"})
+        converter = HTMLToDocument(extract_metadata=True)
+
+        doc = converter.run(sources=[stream], meta={"title": "My own title"})["documents"][0]
+
+        assert doc.meta["title"] == "My own title"
+        assert doc.meta["url"] == "test_url"
+        assert doc.meta["sitename"] == "Haystack"
+
+    def test_run_with_extract_metadata_page_metadata_overrides_bytestream_meta(self, test_files_path):
+        with open(test_files_path / "html" / "what_is_haystack.html", "rb") as file:
+            stream = ByteStream(file.read(), meta={"title": "Title from ByteStream"})
+        converter = HTMLToDocument(extract_metadata=True)
+
+        doc = converter.run(sources=[stream])["documents"][0]
+
+        assert doc.meta["title"] == "What is Haystack? | Haystack"
+
+    @pytest.mark.parametrize(
+        "mock_kwargs", [{"side_effect": ValueError("broken page")}, {"return_value": None}], ids=["error", "none"]
+    )
+    def test_run_with_extract_metadata_keeps_document_when_metadata_extraction_fails(
+        self, test_files_path, caplog, mock_kwargs
+    ):
+        sources = [test_files_path / "html" / "what_is_haystack.html"]
+        converter = HTMLToDocument(extract_metadata=True)
+
+        with patch("haystack.components.converters.html.trafilatura_extract_metadata", **mock_kwargs):
+            with caplog.at_level(logging.WARNING):
+                docs = converter.run(sources=sources)["documents"]
+
+        assert len(docs) == 1
+        assert "Haystack" in docs[0].content
+        assert docs[0].meta == {"file_path": "what_is_haystack.html"}
+        if "side_effect" in mock_kwargs:
+            assert "Could not extract page metadata from" in caplog.text
+
+    def test_run_without_extract_metadata_does_not_call_trafilatura_extract_metadata(self, test_files_path):
+        sources = [test_files_path / "html" / "what_is_haystack.html"]
+
+        with patch("haystack.components.converters.html.trafilatura_extract_metadata") as mock_extract_metadata:
+            docs = HTMLToDocument().run(sources=sources)["documents"]
+
+        mock_extract_metadata.assert_not_called()
+        assert docs[0].meta == {"file_path": "what_is_haystack.html"}
