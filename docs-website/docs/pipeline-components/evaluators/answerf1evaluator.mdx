@@ -1,0 +1,96 @@
+---
+title: "AnswerF1Evaluator"
+id: answerf1evaluator
+slug: "/answerf1evaluator"
+description: "The `AnswerF1Evaluator` evaluates answers predicted by Haystack pipelines using ground truth labels. It computes the token-level F1 score between a predicted answer and the ground truth answer, giving partial credit when the two answers share some of their words."
+hep_available: false
+---
+
+# AnswerF1Evaluator
+
+The `AnswerF1Evaluator` evaluates answers predicted by Haystack pipelines using ground truth labels. It computes the token-level F1 score between a predicted answer and the ground truth answer, giving partial credit when the two answers share some of their words.
+
+<div className="key-value-table">
+
+|  |  |
+| --- | --- |
+| **Most common position in a pipeline** | On its own or in an evaluation pipeline. To be used after a separate pipeline that has generated the inputs for the Evaluator. |
+| **Mandatory run variables** | `ground_truth_answers`: A list of strings containing the ground truth answers  <br /> <br />`predicted_answers`: A list of strings containing the predicted answers to be evaluated |
+| **Output variables** | A dictionary containing:  <br /> <br />\- `score`: A number from 0.0 to 1.0 representing the average F1 score over all answer pairs  <br /> <br />- `individual_scores`: A list of F1 scores from 0.0 to 1.0, one for each pair of ground truth and predicted answer |
+| **API reference** | [Evaluators](/reference/evaluators-api) |
+| **GitHub link** | https://github.com/deepset-ai/haystack/blob/main/haystack/components/evaluators/answer_f1.py |
+| **Package name** | `haystack-ai` |
+
+</div>
+
+## Overview
+
+You can use the `AnswerF1Evaluator` component to evaluate answers predicted by a Haystack pipeline, such as an extractive question answering pipeline, against ground truth labels. It uses the F1 score as defined in the [SQuAD benchmark](https://arxiv.org/abs/1606.05250): both answers are split into tokens, precision is the share of predicted tokens that appear in the ground truth answer, recall is the share of ground truth tokens that appear in the predicted answer, and F1 is the harmonic mean of the two.
+
+Compared to the [`AnswerExactMatchEvaluator`](answerexactmatchevaluator.mdx), it doesn't score an answer as 0 just because it has an extra word or a different word order. Compared to the [`SASEvaluator`](sasevaluator.mdx), it needs no model, so it's fast and free to run. It only compares words, though, so answers that mean the same with different words, such as "100 %" and "one hundred percent", still score 0.
+
+By default, both answers are normalized before comparison: they are lowercased, and punctuation, the English articles "a", "an", and "the", and extra whitespace are removed. To compare the answers as they are, initialize the component with `normalize=False`. The answers are then only split on whitespace.
+
+If both answers have no tokens, the score is 1.0. If only one of them has no tokens, the score is 0.0.
+
+Note that only _one_ predicted answer is compared to _one_ ground truth answer at a time. The component does not support multiple ground truth answers for the same question or multiple answers predicted for the same question.
+
+## Usage
+
+### On its own
+
+Below is an example of using an `AnswerF1Evaluator` component to evaluate two answers and compare them to ground truth answers.
+
+```python
+from haystack.components.evaluators import AnswerF1Evaluator
+
+evaluator = AnswerF1Evaluator()
+result = evaluator.run(
+    ground_truth_answers=["Eiffel Tower", "Paris"],
+    predicted_answers=["the Eiffel Tower in Paris", "Paris."],
+)
+
+print(result["individual_scores"])
+# [0.6666666666666666, 1.0]
+print(result["score"])
+# 0.8333333333333333
+```
+
+### In a pipeline
+
+Below is an example where we use an `AnswerExactMatchEvaluator` and an `AnswerF1Evaluator` in a pipeline to evaluate the same answers. Running a pipeline instead of the individual components simplifies calculating more than one metric.
+
+```python
+from haystack import Pipeline
+from haystack.components.evaluators import AnswerExactMatchEvaluator, AnswerF1Evaluator
+
+pipeline = Pipeline()
+pipeline.add_component("em_evaluator", AnswerExactMatchEvaluator())
+pipeline.add_component("f1_evaluator", AnswerF1Evaluator())
+
+ground_truth_answers = ["Eiffel Tower", "Paris"]
+predicted_answers = ["the Eiffel Tower in Paris", "Paris."]
+
+result = pipeline.run(
+    {
+        "em_evaluator": {
+            "ground_truth_answers": ground_truth_answers,
+            "predicted_answers": predicted_answers,
+        },
+        "f1_evaluator": {
+            "ground_truth_answers": ground_truth_answers,
+            "predicted_answers": predicted_answers,
+        },
+    },
+)
+
+for evaluator in result:
+    print(result[evaluator]["individual_scores"])
+# [0, 0]
+# [0.6666666666666666, 1.0]
+
+for evaluator in result:
+    print(result[evaluator]["score"])
+# 0.0
+# 0.8333333333333333
+```
