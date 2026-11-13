@@ -402,6 +402,7 @@ export default {
             'pipeline-components/evaluators/documentmapevaluator',
             'pipeline-components/evaluators/documentmrrevaluator',
             'pipeline-components/evaluators/documentndcgevaluator',
+            'pipeline-components/evaluators/documentprecisionevaluator',
             'pipeline-components/evaluators/documentrecallevaluator',
             'pipeline-components/evaluators/faithfulnessevaluator',
             'pipeline-components/evaluators/llmevaluator',
