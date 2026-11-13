@@ -5,14 +5,11 @@
 
 from typing import Any
 
+import numpy as np
+
 from haystack import Document, component, logging
-from haystack.lazy_imports import LazyImport
 
 logger = logging.getLogger(__name__)
-
-
-with LazyImport(message="Run 'pip install \"torch>=1.13\"'") as torch_import:
-    import torch
 
 
 @component
@@ -56,8 +53,6 @@ class TopPSampler:
               If greater than the number of scored documents, all scored documents are returned.
         :raises ValueError: If top_p is not within [0, 1] or min_top_k is not a non-negative integer or None.
         """
-        torch_import.check()
-
         self.top_p = top_p
         if not 0 <= top_p <= 1:
             raise ValueError(f"top_p must be between 0 and 1. Got {top_p}.")
@@ -98,21 +93,26 @@ class TopPSampler:
         )
         sorted_documents, sorted_scores = [list(t) for t in zip(*sorted_docs_with_scores, strict=True)]
 
-        tensor_scores = torch.tensor(sorted_scores, dtype=torch.float32)
-        probs = torch.nn.functional.softmax(tensor_scores, dim=-1)
-        cumulative_probs = torch.cumsum(probs, dim=-1)
+        # Softmax over the scores, shifted by the max score for numerical stability. float32 keeps the results
+        # identical to the previous torch-based implementation. Infinite or NaN scores produce NaN probabilities,
+        # which select no document, so the "invalid value" warnings numpy would raise for them are silenced.
+        with np.errstate(invalid="ignore", over="ignore"):
+            scores_array = np.asarray(sorted_scores, dtype=np.float32)
+            exp_scores = np.exp(scores_array - scores_array.max())
+            probs = exp_scores / exp_scores.sum()
+        cumulative_probs = np.cumsum(probs)
 
         # Check if the cumulative probabilities are close to top_p with a 1e-6 tolerance
-        close_to_top_p = torch.isclose(cumulative_probs, torch.tensor(top_p, device=cumulative_probs.device), atol=1e-6)
+        close_to_top_p = np.isclose(cumulative_probs, top_p, atol=1e-6)
 
         # Combine the close_to_top_p with original condition using logical OR
         condition = (cumulative_probs <= top_p) | close_to_top_p
 
-        # Find the indices with cumulative probabilities that exceed top_p
-        top_p_indices = torch.where(torch.BoolTensor(condition))[0]
+        # Find the indices with cumulative probabilities that do not exceed top_p
+        top_p_indices = np.where(condition)[0]
 
         # Map the selected indices back to their original indices
-        selected_docs = [sorted_documents[i.item()] for i in top_p_indices]
+        selected_docs = [sorted_documents[i] for i in top_p_indices]
 
         if self.min_top_k and len(selected_docs) < self.min_top_k:
             selected_docs = sorted_documents[: self.min_top_k]
