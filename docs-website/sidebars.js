@@ -283,6 +283,7 @@ export default {
             'pipeline-components/converters/doclingserveconverter',
             'pipeline-components/converters/documenttoimagecontent',
             'pipeline-components/converters/docxtodocument',
+            'pipeline-components/converters/emltodocument',
             'pipeline-components/converters/filetofilecontent',
             'pipeline-components/converters/gotenbergfileconverter',
             'pipeline-components/converters/htmltodocument',
