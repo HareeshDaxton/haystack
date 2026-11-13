@@ -1,0 +1,6 @@
+---
+enhancements:
+  - |
+    ``TopPSampler`` no longer requires ``torch``. The softmax and cumulative sum it uses to select documents are
+    now computed with ``numpy``, which is already a Haystack dependency, so the component works right after
+    ``pip install haystack-ai``. The selected documents are the same as before.
