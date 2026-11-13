@@ -1,0 +1,8 @@
+---
+features:
+  - |
+    Add ``EMLToDocument`` to convert email files in the standard ``.eml`` format (RFC 822 / MIME), as saved by Gmail,
+    Thunderbird, Apple Mail, and most other email clients, into Documents. It works like ``MSGToDocument``: the
+    sender, recipients, CC, BCC, subject, and body go into the Document content, and file attachments are returned as
+    ``ByteStream`` objects. The plain text body is preferred over the HTML body. ``EMLToDocument`` uses only the
+    Python standard library, so no extra packages are needed.
