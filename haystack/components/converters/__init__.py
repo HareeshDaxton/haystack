@@ -10,6 +10,7 @@ from lazy_imports import LazyImporter
 _import_structure = {
     "csv": ["CSVToDocument"],
     "docx": ["DOCXToDocument"],
+    "eml": ["EMLToDocument"],
     "file_to_file_content": ["FileToFileContent"],
     "html": ["HTMLToDocument"],
     "json": ["JSONConverter"],
@@ -27,6 +28,7 @@ _import_structure = {
 if TYPE_CHECKING:
     from .csv import CSVToDocument as CSVToDocument
     from .docx import DOCXToDocument as DOCXToDocument
+    from .eml import EMLToDocument as EMLToDocument
     from .file_to_file_content import FileToFileContent as FileToFileContent
     from .html import HTMLToDocument as HTMLToDocument
     from .json import JSONConverter as JSONConverter
