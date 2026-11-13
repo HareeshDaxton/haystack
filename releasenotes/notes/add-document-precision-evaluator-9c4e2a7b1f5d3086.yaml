@@ -1,0 +1,8 @@
+---
+features:
+  - |
+    Add ``DocumentPrecisionEvaluator`` to calculate the precision of retrieved documents: the share of retrieved
+    documents that match a ground truth document. It complements ``DocumentRecallEvaluator``, which only checks
+    whether the relevant documents were found, by showing how many irrelevant documents a retriever returns.
+    Like the other document evaluators, it supports the ``document_comparison_field`` parameter to compare documents
+    by ``content``, ``id``, or a metadata field.
