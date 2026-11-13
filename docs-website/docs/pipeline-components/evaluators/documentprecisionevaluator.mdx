@@ -1,0 +1,115 @@
+---
+title: "DocumentPrecisionEvaluator"
+id: documentprecisionevaluator
+slug: "/documentprecisionevaluator"
+description: "The `DocumentPrecisionEvaluator` evaluates documents retrieved by Haystack pipelines using ground truth labels. It checks how many of the retrieved documents are relevant. This metric is called precision."
+hep_available: false
+---
+
+# DocumentPrecisionEvaluator
+
+The `DocumentPrecisionEvaluator` evaluates documents retrieved by Haystack pipelines using ground truth labels. It checks how many of the retrieved documents are relevant. This metric is called precision.
+
+<div className="key-value-table">
+
+|  |  |
+| --- | --- |
+| **Most common position in a pipeline** | On its own or in an evaluation pipeline. To be used after a separate pipeline that has generated the inputs for the Evaluator. |
+| **Mandatory run variables** | `ground_truth_documents`: A list of a list of ground truth documents. This accounts for one list of ground truth documents per question.  <br /> <br />`retrieved_documents`: A list of a list of retrieved documents. This accounts for one list of retrieved documents per question. |
+| **Output variables** | A dictionary containing:  <br /> <br />\- `score`: A number from 0.0 to 1.0 that represents the mean precision score over all inputs  <br /> <br />- `individual_scores`: A list of the individual precision scores ranging from 0.0 to 1.0 of each input pair of a list of retrieved documents and a list of ground truth documents. |
+| **API reference** | [Evaluators](/reference/evaluators-api) |
+| **GitHub link** | https://github.com/deepset-ai/haystack/blob/main/haystack/components/evaluators/document_precision.py |
+| **Package name** | `haystack-ai` |
+
+</div>
+
+## Overview
+
+You can use the `DocumentPrecisionEvaluator` component to evaluate documents retrieved by a Haystack pipeline, such as a RAG Pipeline, against ground truth labels.
+
+For each question, precision is the number of retrieved documents that match a ground truth document, divided by the number of retrieved documents. A score of 1 means that every retrieved document is relevant.
+
+Precision complements [`DocumentRecallEvaluator`](documentrecallevaluator.mdx). Recall checks whether the relevant documents were found. Precision checks how much noise came with them. For example, a retriever that returns ten documents, of which one is relevant, has a recall of 1 but a precision of 0.1. Use both metrics together when you tune `top_k`, add a ranker, or set a score threshold.
+
+By default, documents are compared by their `content`. You can set `document_comparison_field` to `"id"` or to a metadata key such as `"meta.file_id"` to compare on another field. Documents are compared by their unique values, so a document that is retrieved twice counts once. Documents without a value for the comparison field are ignored.
+
+## Usage
+
+### On its own
+
+Below is an example where we use a `DocumentPrecisionEvaluator` component to evaluate documents retrieved for two queries. For the first query, there is one ground truth document and one retrieved document. For the second query, there are two ground truth documents and four retrieved documents, two of which are relevant.
+
+```python
+from haystack import Document
+from haystack.components.evaluators import DocumentPrecisionEvaluator
+
+evaluator = DocumentPrecisionEvaluator()
+result = evaluator.run(
+    ground_truth_documents=[
+        [Document(content="France")],
+        [Document(content="9th century"), Document(content="9th")],
+    ],
+    retrieved_documents=[
+        [Document(content="France")],
+        [
+            Document(content="9th century"),
+            Document(content="10th century"),
+            Document(content="9th"),
+            Document(content="the 9th century"),
+        ],
+    ],
+)
+print(result["individual_scores"])
+# [1.0, 0.5]
+print(result["score"])
+# 0.75
+```
+
+### In a pipeline
+
+Below is an example where we use a `DocumentPrecisionEvaluator` and a `DocumentRecallEvaluator` in a pipeline to evaluate retrieved documents and compare them to ground truth documents. Running a pipeline instead of the individual components simplifies calculating more than one metric.
+
+```python
+from haystack import Document, Pipeline
+from haystack.components.evaluators import DocumentPrecisionEvaluator, DocumentRecallEvaluator
+
+pipeline = Pipeline()
+pipeline.add_component("precision_evaluator", DocumentPrecisionEvaluator())
+pipeline.add_component("recall_evaluator", DocumentRecallEvaluator())
+
+ground_truth_documents = [
+    [Document(content="France")],
+    [Document(content="9th century"), Document(content="9th")],
+]
+retrieved_documents = [
+    [Document(content="France")],
+    [
+        Document(content="9th century"),
+        Document(content="10th century"),
+        Document(content="9th"),
+        Document(content="the 9th century"),
+    ],
+]
+
+result = pipeline.run(
+    {
+        "precision_evaluator": {
+            "ground_truth_documents": ground_truth_documents,
+            "retrieved_documents": retrieved_documents,
+        },
+        "recall_evaluator": {
+            "ground_truth_documents": ground_truth_documents,
+            "retrieved_documents": retrieved_documents,
+        },
+    },
+)
+
+for evaluator in result:
+    print(evaluator, result[evaluator]["individual_scores"])
+# precision_evaluator [1.0, 0.5]
+# recall_evaluator [1.0, 1.0]
+for evaluator in result:
+    print(evaluator, result[evaluator]["score"])
+# precision_evaluator 0.75
+# recall_evaluator 1.0
+```
