@@ -2,12 +2,17 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+import importlib
+import math
 import random
+import sys
+import warnings
 from typing import Any
 
 import pytest
 
 from haystack import Document
+from haystack.components.samplers import top_p as top_p_module
 from haystack.components.samplers.top_p import TopPSampler
 
 
@@ -178,3 +183,65 @@ class TestTopPSampler:
         sampler = TopPSampler(min_top_k=1, top_p=0.99)
         output = sampler.run(documents=documents_with_score)
         assert output["documents"] == documents_with_score[:2]
+
+    def test_run_with_tied_scores_keeps_input_order(self) -> None:
+        sampler = TopPSampler(top_p=0.5)
+        docs = [Document(content=str(i), score=0.5) for i in range(4)]
+        output = sampler.run(documents=docs)
+        # each document gets 25% of the probability mass, so the first two reach top_p=0.5
+        assert output["documents"] == docs[:2]
+
+    @pytest.mark.parametrize("bad_score", [math.inf, -math.inf, math.nan])
+    def test_run_with_non_finite_scores_does_not_raise_or_warn(self, bad_score: float) -> None:
+        sampler = TopPSampler(top_p=0.9)
+        docs = [Document(content="Sarajevo", score=0.7), Document(content="Berlin", score=bad_score)]
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            output = sampler.run(documents=docs)
+        assert len(output["documents"]) >= 1
+
+    def test_run_with_positive_infinite_score_returns_that_document(self) -> None:
+        sampler = TopPSampler(top_p=0.9)
+        docs = [Document(content="Sarajevo", score=0.7), Document(content="Berlin", score=math.inf)]
+        output = sampler.run(documents=docs)
+        assert output["documents"] == [docs[1]]
+
+    def test_works_without_torch(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # Setting a module to None in sys.modules makes any `import torch` raise ImportError
+        monkeypatch.setitem(sys.modules, "torch", None)
+        module = importlib.reload(top_p_module)
+        try:
+            sampler = module.TopPSampler(top_p=0.95, score_field="similarity_score")
+            docs = [
+                Document(content="Berlin", meta={"similarity_score": -10.6}),
+                Document(content="Belgrade", meta={"similarity_score": -8.9}),
+                Document(content="Sarajevo", meta={"similarity_score": -4.6}),
+            ]
+            output = sampler.run(documents=docs)
+            assert [doc.content for doc in output["documents"]] == ["Sarajevo"]
+        finally:
+            monkeypatch.undo()
+            importlib.reload(top_p_module)
+
+    def test_run_matches_torch_softmax(self) -> None:
+        # The sampler used torch before. This test checks that the numpy implementation selects
+        # exactly the same documents as the original torch code on many random score lists.
+        torch = pytest.importorskip("torch")
+
+        def torch_selection(sorted_scores: list[float], top_p: float) -> list[int]:
+            tensor_scores = torch.tensor(sorted_scores, dtype=torch.float32)
+            probs = torch.nn.functional.softmax(tensor_scores, dim=-1)
+            cumulative_probs = torch.cumsum(probs, dim=-1)
+            close_to_top_p = torch.isclose(cumulative_probs, torch.tensor(top_p), atol=1e-6)
+            condition = (cumulative_probs <= top_p) | close_to_top_p
+            return [int(i) for i in torch.where(condition)[0]]
+
+        rng = random.Random(42)
+        for _ in range(1000):
+            scale = rng.choice([0.01, 1.0, 10.0, 100.0])
+            scores = sorted((rng.uniform(-scale, scale) for _ in range(rng.randint(1, 20))), reverse=True)
+            top_p = rng.choice([0.0, 0.5, 0.9, 0.95, 1.0, round(rng.random(), 3)])
+            docs = [Document(content=str(i), score=score) for i, score in enumerate(scores)]
+
+            expected = [docs[i] for i in torch_selection(scores, top_p)] or [docs[0]]
+            assert TopPSampler(top_p=top_p).run(documents=docs)["documents"] == expected
