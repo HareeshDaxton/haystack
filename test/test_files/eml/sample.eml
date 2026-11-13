@@ -1,0 +1,38 @@
+From: Alice Example <alice@example.com>
+To: Bob Example <bob@example.com>
+Cc: carol@example.com
+Subject: =?utf-8?q?Q3_report_=E2=80=93_final?=
+Date: Tue, 10 Nov 2026 09:30:00 +0000
+Message-ID: <q3-report-0001@example.com>
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="mixed-boundary"
+
+--mixed-boundary
+Content-Type: multipart/alternative; boundary="alt-boundary"
+
+--alt-boundary
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 7bit
+
+Hi Bob,
+
+The Q3 report is attached. Revenue grew 12% to 112 million.
+
+Alice
+
+--alt-boundary
+Content-Type: text/html; charset="utf-8"
+Content-Transfer-Encoding: 7bit
+
+<p>Hi Bob,</p><p>The Q3 report is attached. Revenue grew 12% to 112 million.</p><p>Alice</p>
+
+--alt-boundary--
+
+--mixed-boundary
+Content-Type: text/csv
+Content-Transfer-Encoding: base64
+Content-Disposition: attachment; filename="q3.csv"
+
+cXVhcnRlcixyZXZlbnVlClExLDk1ClEyLDEwMApRMywxMTIK
+
+--mixed-boundary--
