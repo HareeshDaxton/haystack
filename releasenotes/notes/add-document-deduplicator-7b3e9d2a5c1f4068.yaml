@@ -1,0 +1,9 @@
+---
+features:
+  - |
+    Added the `DocumentDeduplicator` component. It removes duplicate documents by comparing their content or
+    metadata fields, not their IDs. This catches copies that `DocumentWriter` and `DocumentJoiner` miss, such as
+    the same text from two different URLs or files. Use the `keys` parameter to choose the fields, for example
+    `["content"]` (default), `["meta.url"]`, or `["content", "meta.file_path"]`.
+    When there are duplicates, the document with the highest score is kept; without scores, the first one is kept.
+    The removed documents are returned in the `duplicates` output.
