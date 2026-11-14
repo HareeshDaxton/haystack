@@ -1,0 +1,141 @@
+---
+title: "DocumentDeduplicator"
+id: documentdeduplicator
+slug: "/documentdeduplicator"
+description: "Use `DocumentDeduplicator` to remove duplicate documents that have the same content or the same metadata value, even when their IDs are different."
+hep_available: false
+---
+
+# DocumentDeduplicator
+
+Use `DocumentDeduplicator` to remove duplicate documents that have the same content or the same metadata value, even when their IDs are different.
+
+<div className="key-value-table">
+
+|  |  |
+| --- | --- |
+| **Most common position in a pipeline** | In indexing pipelines before a [`DocumentWriter`](../writers/documentwriter.mdx), or in query pipelines after a [`DocumentJoiner`](../joiners/documentjoiner.mdx) |
+| **Mandatory run variables** | `documents`: A list of documents |
+| **Output variables** | `documents`: A list of unique documents  <br /> <br />`duplicates`: A list of the documents that were removed |
+| **API reference** | [PreProcessors](/reference/preprocessors-api) |
+| **GitHub link** | https://github.com/deepset-ai/haystack/blob/main/haystack/components/preprocessors/document_deduplicator.py |
+| **Package name** | `haystack-ai` |
+
+</div>
+
+## Overview
+
+A document ID is built from both its content and its metadata. Two documents with the same text but different metadata get different IDs. This happens often in real data, for example when the same page is crawled under two URLs, or when the same file is indexed as a PDF and as an HTML page.
+
+`DocumentWriter` with `DuplicatePolicy.SKIP` and `DocumentJoiner` compare IDs, so they keep both copies. `DocumentDeduplicator` compares the fields you choose instead, and keeps one document for each unique value.
+
+Use the `keys` parameter to choose the fields:
+
+- `["content"]` (default): documents with the same text are duplicates.
+- `["meta.url"]`: documents with the same `url` metadata value are duplicates. Nested fields such as `"meta.source.url"` are supported.
+- `["content", "meta.file_path"]`: documents are duplicates only if all keys have the same values.
+
+A document where any key is missing or `None` is never treated as a duplicate. The comparison is exact, so it is case-sensitive and whitespace-sensitive. To ignore such differences, use a [`DocumentCleaner`](documentcleaner.mdx) before this component.
+
+When there are duplicates, `DocumentDeduplicator` keeps the document with the highest `score`. If the scores are equal or missing, it keeps the first one. The kept document takes the position of the first copy, so the order of the list doesn't change. The removed documents are returned in the `duplicates` output.
+
+The component only looks at the list of documents in the current run. It doesn't store anything between runs.
+
+## Usage
+
+### On its own
+
+```python
+from haystack import Document
+from haystack.components.preprocessors import DocumentDeduplicator
+
+documents = [
+    Document(
+        content="Haystack is an open-source AI framework.",
+        meta={"url": "https://example.com/a"},
+    ),
+    Document(
+        content="Haystack is an open-source AI framework.",
+        meta={"url": "https://example.com/a?ref=1"},
+    ),
+    Document(
+        content="Pipelines connect components.",
+        meta={"url": "https://example.com/b"},
+    ),
+]
+
+deduplicator = DocumentDeduplicator()
+result = deduplicator.run(documents=documents)
+
+print([doc.meta["url"] for doc in result["documents"]])
+# ['https://example.com/a', 'https://example.com/b']
+print([doc.meta["url"] for doc in result["duplicates"]])
+# ['https://example.com/a?ref=1']
+```
+
+### In an indexing pipeline
+
+In this example, `DocumentDeduplicator` removes the copies before `DocumentWriter` writes the documents to the Document Store.
+
+```python
+from haystack import Document, Pipeline
+from haystack.components.preprocessors import DocumentDeduplicator
+from haystack.components.writers import DocumentWriter
+from haystack.document_stores.in_memory import InMemoryDocumentStore
+
+document_store = InMemoryDocumentStore()
+
+indexing = Pipeline()
+indexing.add_component("deduplicator", DocumentDeduplicator())
+indexing.add_component("writer", DocumentWriter(document_store=document_store))
+indexing.connect("deduplicator.documents", "writer.documents")
+
+documents = [
+    Document(content="Haystack is an open-source AI framework.", meta={"file_path": "intro.pdf"}),
+    Document(content="Haystack is an open-source AI framework.", meta={"file_path": "intro.html"}),
+    Document(content="Pipelines connect components.", meta={"file_path": "pipelines.pdf"}),
+]
+
+result = indexing.run({"deduplicator": {"documents": documents}})
+print(result["writer"]["documents_written"])
+# 2
+```
+
+### In a query pipeline
+
+In this example, two retrievers find the same text in two different files. `DocumentDeduplicator` keeps only the copy with the higher score, so the prompt gets the text once.
+
+```python
+from haystack import Document, Pipeline
+from haystack.components.joiners import DocumentJoiner
+from haystack.components.preprocessors import DocumentDeduplicator
+from haystack.components.retrievers.in_memory import InMemoryBM25Retriever
+from haystack.document_stores.in_memory import InMemoryDocumentStore
+
+store_a = InMemoryDocumentStore()
+store_a.write_documents([Document(content="Paris is the capital of France.", meta={"file_path": "a.pdf"})])
+store_b = InMemoryDocumentStore()
+store_b.write_documents(
+    [
+        Document(content="Paris is the capital of France.", meta={"file_path": "b.html"}),
+        Document(content="Berlin is the capital of Germany.", meta={"file_path": "c.pdf"}),
+    ]
+)
+
+query_pipeline = Pipeline()
+query_pipeline.add_component("retriever_a", InMemoryBM25Retriever(document_store=store_a))
+query_pipeline.add_component("retriever_b", InMemoryBM25Retriever(document_store=store_b))
+query_pipeline.add_component("joiner", DocumentJoiner())
+query_pipeline.add_component("deduplicator", DocumentDeduplicator())
+query_pipeline.connect("retriever_a", "joiner")
+query_pipeline.connect("retriever_b", "joiner")
+query_pipeline.connect("joiner", "deduplicator")
+
+query = "What is the capital of France?"
+result = query_pipeline.run({"retriever_a": {"query": query}, "retriever_b": {"query": query}})
+
+for doc in result["deduplicator"]["documents"]:
+    print(doc.content)
+# Paris is the capital of France.
+# Berlin is the capital of Germany.
+```
