@@ -537,6 +537,7 @@ export default {
             'pipeline-components/preprocessors/csvdocumentcleaner',
             'pipeline-components/preprocessors/csvdocumentsplitter',
             'pipeline-components/preprocessors/documentcleaner',
+            'pipeline-components/preprocessors/documentdeduplicator',
             'pipeline-components/preprocessors/documentpreprocessor',
             'pipeline-components/preprocessors/documentsplitter',
             'pipeline-components/preprocessors/embeddingbaseddocumentsplitter',
