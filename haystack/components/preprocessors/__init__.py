@@ -11,6 +11,7 @@ _import_structure = {
     "csv_document_cleaner": ["CSVDocumentCleaner"],
     "csv_document_splitter": ["CSVDocumentSplitter"],
     "document_cleaner": ["DocumentCleaner"],
+    "document_deduplicator": ["DocumentDeduplicator"],
     "document_preprocessor": ["DocumentPreprocessor"],
     "document_splitter": ["DocumentSplitter"],
     "embedding_based_document_splitter": ["EmbeddingBasedDocumentSplitter"],
@@ -25,6 +26,7 @@ if TYPE_CHECKING:
     from .csv_document_cleaner import CSVDocumentCleaner as CSVDocumentCleaner
     from .csv_document_splitter import CSVDocumentSplitter as CSVDocumentSplitter
     from .document_cleaner import DocumentCleaner as DocumentCleaner
+    from .document_deduplicator import DocumentDeduplicator as DocumentDeduplicator
     from .document_preprocessor import DocumentPreprocessor as DocumentPreprocessor
     from .document_splitter import DocumentSplitter as DocumentSplitter
     from .embedding_based_document_splitter import EmbeddingBasedDocumentSplitter as EmbeddingBasedDocumentSplitter
