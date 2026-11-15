@@ -1,0 +1,157 @@
+---
+title: "ToolCallEvaluator"
+id: toolcallevaluator
+slug: "/toolcallevaluator"
+description: "The `ToolCallEvaluator` checks whether an Agent called the expected tools with the expected arguments. It compares the tool calls in the Agent's messages with ground truth tool calls, without using an LLM."
+hep_available: false
+---
+
+# ToolCallEvaluator
+
+The `ToolCallEvaluator` checks whether an Agent called the expected tools with the expected arguments. It compares the tool calls in the Agent's messages with ground truth tool calls, without using an LLM.
+
+<div className="key-value-table">
+
+|  |  |
+| --- | --- |
+| **Most common position in a pipeline** | On its own or in an evaluation pipeline. To be used after an Agent or a pipeline that has generated the messages to evaluate. |
+| **Mandatory run variables** | `ground_truth_tool_calls`: A list of expected tool calls for each sample <br /> <br />`predicted_messages`: A list of messages for each sample, for example the `messages` output of an `Agent` |
+| **Output variables** | A dictionary containing:  <br /> <br />\- `score`: A number from 0.0 to 1.0 representing the proportion of samples whose tool calls matched  <br /> <br />- `individual_scores`: A list of 1.0 and 0.0, one per sample, where 1.0 means the tool calls matched |
+| **API reference** | [Evaluators](/reference/evaluators-api) |
+| **GitHub link** | https://github.com/deepset-ai/haystack/blob/main/haystack/components/evaluators/tool_call_evaluator.py |
+| **Package name** | `haystack-ai` |
+
+</div>
+
+## Overview
+
+You can use the `ToolCallEvaluator` to test how an [Agent](../agents-1/agent.mdx) uses its tools. For a set of test questions, you write down the tool calls the Agent should make, run the Agent, and pass its `messages` output to the evaluator. This is useful as a regression test when you change a system prompt, a tool description, or the model.
+
+The evaluator reads the tool calls from the messages in order and compares them with the expected tool calls. Each sample scores 1.0 if the calls match and 0.0 otherwise. Because it does not use an LLM, the result is deterministic and free to compute.
+
+An empty list of expected tool calls means that no tool should be called. Such a sample passes only if the Agent made no tool call.
+
+### Parameters
+
+`match_mode` sets how the predicted tool calls of a sample must relate to the expected ones:
+
+| Value | A sample passes if the Agent... |
+| --- | --- |
+| `"strict"` | made the same calls in the same order. |
+| `"unordered"` (default) | made the same calls in any order. Use it when the model can call tools in parallel. |
+| `"superset"` | made every expected call. Extra calls are allowed. |
+| `"subset"` | made no call outside the expected ones. Missing calls are allowed. |
+
+To check that an Agent didn't make unwanted calls, for example to a tool that deletes data, use `"unordered"` or `"subset"`. `"superset"` alone doesn't catch extra calls.
+
+`arguments_match` sets how two calls to the same tool are compared:
+
+| Value | Two calls match if... |
+| --- | --- |
+| `"exact"` (default) | their arguments are equal. |
+| `"subset"` | every expected argument is present with an equal value. Extra arguments are allowed, for example optional arguments the model filled in. |
+| `"ignore"` | they call the same tool. Arguments are not compared. |
+
+Values are compared exactly, so `"Paris"` doesn't match `"paris"`. Booleans only match booleans, so `1` doesn't match `True`. Integers and floats with the same value match.
+
+Each expected call is paired with at most one predicted call, and the other way around. The evaluator finds the best possible pairing, so the order in which calls are listed doesn't change the result in the `"unordered"`, `"superset"`, and `"subset"` modes.
+
+## Usage
+
+### On its own
+
+Below is an example of using a `ToolCallEvaluator` to evaluate two samples. In the first, the Agent called the expected tool with an extra optional argument. In the second, no tool was expected and none was called.
+
+```python
+from haystack.components.evaluators import ToolCallEvaluator
+from haystack.dataclasses import ChatMessage, ToolCall
+
+evaluator = ToolCallEvaluator(match_mode="unordered", arguments_match="subset")
+result = evaluator.run(
+    ground_truth_tool_calls=[
+        [ToolCall(tool_name="get_weather", arguments={"city": "Paris"})],
+        [],
+    ],
+    predicted_messages=[
+        [
+            ChatMessage.from_user("What's the weather in Paris?"),
+            ChatMessage.from_assistant(
+                tool_calls=[
+                    ToolCall(
+                        tool_name="get_weather",
+                        arguments={"city": "Paris", "unit": "celsius"},
+                    ),
+                ],
+            ),
+        ],
+        [ChatMessage.from_user("Hi!"), ChatMessage.from_assistant("Hello! How can I help?")],
+    ],
+)
+
+print(result["individual_scores"])
+# [1.0, 1.0]
+print(result["score"])
+# 1.0
+```
+
+### With an Agent
+
+Below is an example where an Agent answers a list of test questions and the `ToolCallEvaluator` scores its tool calls. Replace `OpenAIChatGenerator` with the Chat Generator you use.
+
+```python
+from haystack.components.agents import Agent
+from haystack.components.evaluators import ToolCallEvaluator
+from haystack.components.generators.chat import OpenAIChatGenerator
+from haystack.dataclasses import ChatMessage, ToolCall
+from haystack.tools import tool
+
+
+@tool
+def get_weather(city: str) -> str:
+    """Get the current weather for a city."""
+    return f"It's sunny in {city}."
+
+
+@tool
+def search_flights(origin: str, destination: str) -> str:
+    """Search flights between two cities."""
+    return f"There are 3 flights from {origin} to {destination}."
+
+
+agent = Agent(chat_generator=OpenAIChatGenerator(), tools=[get_weather, search_flights])
+
+test_set = [
+    (
+        "What's the weather in Paris?",
+        [ToolCall(tool_name="get_weather", arguments={"city": "Paris"})],
+    ),
+    (
+        "Find flights from Berlin to Rome.",
+        [
+            ToolCall(
+                tool_name="search_flights",
+                arguments={"origin": "Berlin", "destination": "Rome"},
+            ),
+        ],
+    ),
+    ("Thanks, that's all!", []),
+]
+
+predicted_messages = [
+    agent.run(messages=[ChatMessage.from_user(question)])["messages"]
+    for question, _ in test_set
+]
+
+evaluator = ToolCallEvaluator(match_mode="unordered", arguments_match="exact")
+result = evaluator.run(
+    ground_truth_tool_calls=[expected for _, expected in test_set],
+    predicted_messages=predicted_messages,
+)
+
+print(result["individual_scores"])
+# [1.0, 1.0, 1.0]
+print(result["score"])
+# 1.0
+```
+
+The evaluator only sees the tool calls in the messages you pass. Tool calls that a nested Agent makes inside an `AgentTool` are not part of the outer Agent's messages.
