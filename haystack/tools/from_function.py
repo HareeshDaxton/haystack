@@ -6,13 +6,17 @@ import inspect
 from collections.abc import Callable
 from typing import Any, overload
 
+from docstring_parser import ParseError, parse
 from pydantic import create_model
 
+from haystack import logging
 from haystack.core.type_utils import _resolve_parameter_types
 
 from .errors import SchemaGenerationError
 from .parameters_schema_utils import _contains_callable_type, _is_state_annotation
 from .tool import Tool
+
+logger = logging.getLogger(__name__)
 
 
 def create_tool_from_function(
@@ -22,6 +26,7 @@ def create_tool_from_function(
     inputs_from_state: dict[str, str] | None = None,
     outputs_to_state: dict[str, dict[str, Any]] | None = None,
     outputs_to_string: dict[str, Any] | None = None,
+    parse_docstring: bool = False,
 ) -> "Tool":
     """
     Create a Tool instance from a function.
@@ -125,6 +130,13 @@ def create_tool_from_function(
            ```
            Each key maps to a dictionary that can contain "source" and/or "handler".
            Note that `raw_result` is not supported in the multiple output format.
+    :param parse_docstring:
+        If `True`, the function's docstring is parsed (reST/Sphinx, Google and NumPy styles are supported).
+        The parameter descriptions it contains are added to the Tool's parameters schema, and only the summary
+        and the long description (without the parameters, returns and raises sections) become the Tool's
+        description. A description from `typing.Annotated` takes precedence over the docstring, and an explicit
+        `description` takes precedence over the parsed one.
+        If `False` (default), the whole docstring is used as the Tool's description.
     :returns:
         The Tool created from the function.
 
@@ -134,9 +146,15 @@ def create_tool_from_function(
     :raises SchemaGenerationError:
         If there is an error generating the JSON schema for the Tool.
     """
-    tool_description = description if description is not None else (function.__doc__ or "")
-
     signature = inspect.signature(function)
+
+    docstring_descriptions: dict[str, str] = {}
+    if parse_docstring:
+        docstring_summary, docstring_descriptions = _parse_function_docstring(function, signature)
+        tool_description = description if description is not None else docstring_summary
+    else:
+        tool_description = description if description is not None else (function.__doc__ or "")
+
     # resolve postponed annotations (`from __future__ import annotations`), keeping `Annotated` descriptions
     param_types = _resolve_parameter_types(function, include_extras=True)
 
@@ -180,6 +198,8 @@ def create_tool_from_function(
 
         if hasattr(annotation, "__metadata__"):
             descriptions[param_name] = annotation.__metadata__[0]
+        elif docstring_descriptions.get(param_name):
+            descriptions[param_name] = docstring_descriptions[param_name]
 
     # create Pydantic model and generate JSON schema
     try:
@@ -221,6 +241,7 @@ def tool(
     inputs_from_state: dict[str, str] | None = None,
     outputs_to_state: dict[str, dict[str, Any]] | None = None,
     outputs_to_string: dict[str, Any] | None = None,
+    parse_docstring: bool = False,
 ) -> Tool: ...
 
 
@@ -233,6 +254,7 @@ def tool(
     inputs_from_state: dict[str, str] | None = None,
     outputs_to_state: dict[str, dict[str, Any]] | None = None,
     outputs_to_string: dict[str, Any] | None = None,
+    parse_docstring: bool = False,
 ) -> Callable[[Callable], Tool]: ...
 
 
@@ -244,6 +266,7 @@ def tool(
     inputs_from_state: dict[str, str] | None = None,
     outputs_to_state: dict[str, dict[str, Any]] | None = None,
     outputs_to_string: dict[str, Any] | None = None,
+    parse_docstring: bool = False,
 ) -> Tool | Callable[[Callable], Tool]:
     """
     Decorator to convert a function into a Tool.
@@ -254,6 +277,14 @@ def tool(
 
     @tool(name="custom_name")  # with parameters
     def my_function(): ...
+
+    @tool(parse_docstring=True)  # parameter descriptions from the docstring
+    def my_function(city: str):
+        '''
+        Get the weather.
+
+        :param city: The city to get the weather for.
+        '''
 
     ### Usage example
     ```python
@@ -341,6 +372,9 @@ def tool(
            ```
            Each key maps to a dictionary that can contain "source" and/or "handler".
            Note that `raw_result` is not supported in the multiple output format.
+    :param parse_docstring:
+        If `True`, parameter descriptions are read from the function's docstring and only the summary and the long
+        description become the Tool's description. See `create_tool_from_function` for details.
 
     :returns: Either a Tool instance or a decorator function that will create one
 
@@ -359,11 +393,59 @@ def tool(
             inputs_from_state=inputs_from_state,
             outputs_to_state=outputs_to_state,
             outputs_to_string=outputs_to_string,
+            parse_docstring=parse_docstring,
         )
 
     if function is None:
         return decorator
     return decorator(function)
+
+
+def _parse_function_docstring(function: Callable, signature: inspect.Signature) -> tuple[str, dict[str, str]]:
+    """
+    Parse a function's docstring into a Tool description and parameter descriptions.
+
+    :param function:
+        The function whose docstring to parse.
+    :param signature:
+        The signature of the function, used to spot documented parameters that the function doesn't have.
+    :returns:
+        A tuple with the description (summary and long description, without the parameters, returns and raises
+        sections) and a dictionary mapping parameter names to their descriptions.
+    """
+    docstring = inspect.getdoc(function)
+    if not docstring:
+        return "", {}
+
+    try:
+        parsed = parse(docstring)
+    except ParseError as e:
+        logger.warning(
+            "Function '{function_name}': could not parse the docstring, so it is used as the Tool description "
+            "without parameter descriptions. Error: {error}",
+            function_name=function.__name__,
+            error=e,
+        )
+        return docstring, {}
+
+    separator = "\n\n" if parsed.blank_after_short_description else "\n"
+    summary = separator.join(part for part in (parsed.short_description, parsed.long_description) if part)
+
+    param_descriptions: dict[str, str] = {}
+    for param in parsed.params:
+        # Google and NumPy styles document variadic parameters as "*args" and "**kwargs"
+        param_name = param.arg_name.lstrip("*")
+        if param_name not in signature.parameters:
+            logger.warning(
+                "Function '{function_name}': the docstring documents a parameter '{param_name}', which is not a "
+                "parameter of the function. Check the docstring for typos.",
+                function_name=function.__name__,
+                param_name=param_name,
+            )
+            continue
+        param_descriptions[param_name] = (param.description or "").strip()
+
+    return summary, param_descriptions
 
 
 # Keywords whose value is a mapping keyed by *names chosen by the user* — property
