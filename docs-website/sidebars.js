@@ -407,6 +407,7 @@ export default {
             'pipeline-components/evaluators/llmevaluator',
             'pipeline-components/evaluators/ragasevaluator',
             'pipeline-components/evaluators/sasevaluator',
+            'pipeline-components/evaluators/toolcallevaluator',
             'pipeline-components/evaluators/external-integrations-evaluators',
           ],
         },
