@@ -422,6 +422,7 @@ export default {
             'pipeline-components/extractors/llmmetadataextractor',
             'pipeline-components/extractors/presidioentityextractor',
             'pipeline-components/extractors/regextextextractor',
+            'pipeline-components/extractors/sitemapurlextractor',
             'pipeline-components/extractors/spacynamedentityextractor',
             'pipeline-components/extractors/transformersnamedentityextractor',
           ],
