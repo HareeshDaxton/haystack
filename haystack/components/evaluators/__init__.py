@@ -17,6 +17,7 @@ _import_structure = {
     "faithfulness": ["FaithfulnessEvaluator"],
     "llm_evaluator": ["LLMEvaluator"],
     "sas_evaluator": ["SASEvaluator"],
+    "tool_call_evaluator": ["ToolCallEvaluator"],
 }
 
 if TYPE_CHECKING:
@@ -29,6 +30,7 @@ if TYPE_CHECKING:
     from .faithfulness import FaithfulnessEvaluator as FaithfulnessEvaluator
     from .llm_evaluator import LLMEvaluator as LLMEvaluator
     from .sas_evaluator import SASEvaluator as SASEvaluator
+    from .tool_call_evaluator import ToolCallEvaluator as ToolCallEvaluator
 
 else:
     sys.modules[__name__] = LazyImporter(name=__name__, module_file=__file__, import_structure=_import_structure)
