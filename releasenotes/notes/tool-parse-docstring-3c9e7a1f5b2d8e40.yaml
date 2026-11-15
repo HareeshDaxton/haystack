@@ -1,0 +1,25 @@
+---
+features:
+  - |
+    Added a ``parse_docstring`` parameter to the ``@tool`` decorator and to ``create_tool_from_function``.
+    When set to ``True``, the function's docstring is parsed (reST/Sphinx, Google and NumPy styles) and the
+    parameter descriptions it contains are added to the Tool's parameters schema, so the Language Model sees what
+    each parameter means. Only the summary and the long description become the Tool's description, without the
+    parameters, returns and raises sections. Descriptions from ``typing.Annotated`` and an explicit ``description``
+    take precedence. The default is ``False``, so existing tools don't change.
+
+    .. code:: python
+
+        from haystack.tools import tool
+
+        @tool(parse_docstring=True)
+        def get_weather(city: str) -> str:
+            """
+            Get the current weather.
+
+            :param city: The city for which to get the weather.
+            """
+            return f"Sunny in {city}"
+
+        # get_weather.description == "Get the current weather."
+        # get_weather.parameters["properties"]["city"]["description"] == "The city for which to get the weather."
