@@ -620,3 +620,303 @@ def test_serialization_with_custom_generators_without_to_dict():
     non_serializable_fallback = FallbackChatGenerator(chat_generators=[NonSerializableGenerator(object())])
     with pytest.raises(SerializationError, match="unsupported value of type"):
         non_serializable_fallback.to_dict()
+
+
+def _unpack(res: dict[str, Any]) -> tuple[list[ChatMessage], dict[str, Any]]:
+    replies, meta = res["replies"], res["meta"]
+    assert isinstance(replies, list)
+    assert isinstance(meta, dict)
+    return replies, meta
+
+
+@component
+class _DummyFinishReasonGen:
+    """Returns one reply per finish reason, like a provider whose safety filter blocked the reply."""
+
+    def __init__(self, finish_reasons: list[str] | None = None, text: str = "blocked"):
+        self.finish_reasons = finish_reasons or ["content_filter"]
+        self.text = text
+        self.calls = 0
+
+    def to_dict(self) -> dict[str, Any]:
+        return default_to_dict(self, finish_reasons=self.finish_reasons, text=self.text)
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "_DummyFinishReasonGen":
+        return default_from_dict(cls, data)
+
+    def _result(self) -> dict[str, Any]:
+        self.calls += 1
+        replies = [ChatMessage.from_assistant(self.text, meta={"finish_reason": r}) for r in self.finish_reasons]
+        return {"replies": replies, "meta": {"dummy_meta": True}}
+
+    def run(
+        self,
+        messages: list[ChatMessage],
+        generation_kwargs: dict[str, Any] | None = None,
+        tools: ToolsType | None = None,
+        streaming_callback: StreamingCallbackT | None = None,
+    ) -> dict[str, Any]:
+        return self._result()
+
+    async def run_async(
+        self,
+        messages: list[ChatMessage],
+        generation_kwargs: dict[str, Any] | None = None,
+        tools: ToolsType | None = None,
+        streaming_callback: StreamingCallbackT | None = None,
+    ) -> dict[str, Any]:
+        return self._result()
+
+
+class TestFallbackOnFinishReasons:
+    def test_init_rejects_invalid_finish_reason(self):
+        with pytest.raises(ValueError, match="Invalid finish reason 'blocked'"):
+            FallbackChatGenerator(chat_generators=[_DummySuccessGen()], fallback_on_finish_reasons=["blocked"])  # type: ignore[list-item]
+
+    def test_init_defaults_to_none(self):
+        gen = FallbackChatGenerator(chat_generators=[_DummySuccessGen()])
+        assert gen.fallback_on_finish_reasons is None
+        assert gen.raise_on_exceptions is None
+
+    def test_rejected_reply_falls_back_to_next_generator(self):
+        blocked = _DummyFinishReasonGen()
+        backup = _DummySuccessGen(text="backup")
+        gen = FallbackChatGenerator(chat_generators=[blocked, backup], fallback_on_finish_reasons=["content_filter"])
+
+        res = gen.run([ChatMessage.from_user("hi")])
+        replies, meta = _unpack(res)
+
+        assert replies[0].text == "backup"
+        assert meta["successful_chat_generator_index"] == 1
+        assert meta["total_attempts"] == 2
+        assert meta["failed_chat_generators"] == ["_DummyFinishReasonGen"]
+        assert meta["failure_reasons"] == ["finish_reason: content_filter"]
+
+    def test_without_option_rejected_reply_is_returned_as_today(self):
+        blocked = _DummyFinishReasonGen()
+        backup = _DummySuccessGen(text="backup")
+        gen = FallbackChatGenerator(chat_generators=[blocked, backup])
+
+        res = gen.run([ChatMessage.from_user("hi")])
+        replies, meta = _unpack(res)
+
+        assert replies[0].meta["finish_reason"] == "content_filter"
+        assert meta["total_attempts"] == 1
+        assert backup.received_messages == []
+
+    def test_all_rejected_returns_first_rejected_result(self, caplog):
+        first = _DummyFinishReasonGen(text="first blocked")
+        second = _DummyFinishReasonGen(finish_reasons=["length"], text="second cut off")
+        gen = FallbackChatGenerator(
+            chat_generators=[first, second], fallback_on_finish_reasons=["content_filter", "length"]
+        )
+
+        with caplog.at_level("WARNING"):
+            res = gen.run([ChatMessage.from_user("hi")])
+            replies, meta = _unpack(res)
+
+        assert replies[0].text == "first blocked"
+        assert meta["successful_chat_generator_index"] == 0
+        assert meta["total_attempts"] == 2
+        assert meta["failed_chat_generators"] == ["_DummyFinishReasonGen", "_DummyFinishReasonGen"]
+        assert meta["failure_reasons"] == ["finish_reason: content_filter", "finish_reason: length"]
+        assert "No chat generator returned an accepted reply" in caplog.text
+
+    def test_rejected_reply_then_exception_returns_rejected_result(self):
+        blocked = _DummyFinishReasonGen()
+        down = _DummyFailGen(exc=RuntimeError("429"))
+        gen = FallbackChatGenerator(chat_generators=[blocked, down], fallback_on_finish_reasons=["content_filter"])
+
+        res = gen.run([ChatMessage.from_user("hi")])
+        replies, meta = _unpack(res)
+
+        assert replies[0].meta["finish_reason"] == "content_filter"
+        assert meta["failure_reasons"] == ["finish_reason: content_filter", "RuntimeError: 429"]
+
+    def test_result_with_one_accepted_reply_is_kept(self):
+        mixed = _DummyFinishReasonGen(finish_reasons=["content_filter", "stop"])
+        backup = _DummySuccessGen(text="backup")
+        gen = FallbackChatGenerator(chat_generators=[mixed, backup], fallback_on_finish_reasons=["content_filter"])
+
+        res = gen.run([ChatMessage.from_user("hi")])
+        replies, meta = _unpack(res)
+
+        assert [r.meta["finish_reason"] for r in replies] == ["content_filter", "stop"]
+        assert meta["total_attempts"] == 1
+        assert backup.received_messages == []
+
+    def test_reply_without_finish_reason_is_accepted(self):
+        plain = _DummySuccessGen(text="no finish reason in meta")
+        gen = FallbackChatGenerator(chat_generators=[plain], fallback_on_finish_reasons=["content_filter"])
+
+        res = gen.run([ChatMessage.from_user("hi")])
+        replies, meta = _unpack(res)
+
+        assert replies[0].text == "no finish reason in meta"
+
+    @pytest.mark.asyncio
+    async def test_run_async_rejected_reply_falls_back(self):
+        blocked = _DummyFinishReasonGen()
+        backup = _DummySuccessGen(text="backup")
+        gen = FallbackChatGenerator(chat_generators=[blocked, backup], fallback_on_finish_reasons=["content_filter"])
+
+        res = await gen.run_async([ChatMessage.from_user("hi")])
+        replies, meta = _unpack(res)
+
+        assert replies[0].text == "backup"
+        assert meta["failure_reasons"] == ["finish_reason: content_filter"]
+
+    @pytest.mark.asyncio
+    async def test_run_async_all_rejected_returns_first_rejected_result(self):
+        first = _DummyFinishReasonGen(text="first blocked")
+        second = _DummyFinishReasonGen(text="second blocked")
+        gen = FallbackChatGenerator(chat_generators=[first, second], fallback_on_finish_reasons=["content_filter"])
+
+        res = await gen.run_async([ChatMessage.from_user("hi")])
+        replies, meta = _unpack(res)
+
+        assert replies[0].text == "first blocked"
+        assert meta["total_attempts"] == 2
+
+
+class TestRaiseOnExceptions:
+    def test_init_rejects_non_exception_class(self):
+        with pytest.raises(TypeError, match="must contain exception classes"):
+            FallbackChatGenerator(chat_generators=[_DummySuccessGen()], raise_on_exceptions=["TypeError"])  # type: ignore[list-item]
+        with pytest.raises(TypeError, match="must contain exception classes"):
+            FallbackChatGenerator(chat_generators=[_DummySuccessGen()], raise_on_exceptions=[str])  # type: ignore[list-item]
+
+    def test_listed_exception_is_raised_immediately(self):
+        bug = _DummyFailGen(exc=TypeError("unexpected keyword argument"))
+        backup = _DummySuccessGen(text="backup")
+        gen = FallbackChatGenerator(chat_generators=[bug, backup], raise_on_exceptions=[TypeError, ValueError])
+
+        with pytest.raises(TypeError, match="unexpected keyword argument"):
+            gen.run([ChatMessage.from_user("hi")])
+        assert backup.received_messages == []
+
+    def test_subclass_of_listed_exception_is_raised(self):
+        class CustomTypeError(TypeError):
+            pass
+
+        gen = FallbackChatGenerator(
+            chat_generators=[_DummyFailGen(exc=CustomTypeError("sub")), _DummySuccessGen()],
+            raise_on_exceptions=[TypeError],
+        )
+        with pytest.raises(CustomTypeError):
+            gen.run([ChatMessage.from_user("hi")])
+
+    def test_other_exceptions_still_fall_back(self):
+        down = _DummyFailGen(exc=RuntimeError("429 Too Many Requests"))
+        backup = _DummySuccessGen(text="backup")
+        gen = FallbackChatGenerator(chat_generators=[down, backup], raise_on_exceptions=[TypeError, ValueError])
+
+        res = gen.run([ChatMessage.from_user("hi")])
+        replies, meta = _unpack(res)
+
+        assert replies[0].text == "backup"
+        assert meta["failed_chat_generators"] == ["_DummyFailGen"]
+        assert meta["failure_reasons"] == ["RuntimeError: 429 Too Many Requests"]
+
+    @pytest.mark.asyncio
+    async def test_run_async_listed_exception_is_raised_immediately(self):
+        bug = _DummyFailGen(exc=ValueError("bad config"))
+        backup = _DummySuccessGen(text="backup")
+        gen = FallbackChatGenerator(chat_generators=[bug, backup], raise_on_exceptions=[ValueError])
+
+        with pytest.raises(ValueError, match="bad config"):
+            await gen.run_async([ChatMessage.from_user("hi")])
+        assert backup.received_messages == []
+
+
+class TestErrorReporting:
+    def test_runtime_error_chains_last_error(self):
+        last = RuntimeError("timed out")
+        gen = FallbackChatGenerator(chat_generators=[_DummyFailGen(exc=RuntimeError("429")), _DummyFailGen(exc=last)])
+
+        with pytest.raises(RuntimeError, match="All 2 chat generators failed") as exc_info:
+            gen.run([ChatMessage.from_user("hi")])
+
+        assert exc_info.value.__cause__ is last
+
+    @pytest.mark.asyncio
+    async def test_run_async_runtime_error_chains_last_error(self):
+        last = RuntimeError("timed out")
+        gen = FallbackChatGenerator(chat_generators=[_DummyFailGen(exc=last)])
+
+        with pytest.raises(RuntimeError) as exc_info:
+            await gen.run_async([ChatMessage.from_user("hi")])
+
+        assert exc_info.value.__cause__ is last
+
+    def test_failure_reasons_aligned_with_failed_chat_generators(self):
+        gen = FallbackChatGenerator(
+            chat_generators=[_DummyFailGen(exc=RuntimeError("boom")), _DummyFinishReasonGen(), _DummySuccessGen()],
+            fallback_on_finish_reasons=["content_filter"],
+        )
+
+        res = gen.run([ChatMessage.from_user("hi")])
+        replies, meta = _unpack(res)
+
+        assert meta["failed_chat_generators"] == ["_DummyFailGen", "_DummyFinishReasonGen"]
+        assert meta["failure_reasons"] == ["RuntimeError: boom", "finish_reason: content_filter"]
+
+    def test_failure_reasons_empty_on_first_success(self):
+        res = FallbackChatGenerator(chat_generators=[_DummySuccessGen()]).run([ChatMessage.from_user("hi")])
+        replies, meta = _unpack(res)
+        assert meta["failed_chat_generators"] == []
+        assert meta["failure_reasons"] == []
+
+
+class TestSerializationOfFallbackOptions:
+    def test_to_dict_and_from_dict_with_options(self):
+        gen = FallbackChatGenerator(
+            chat_generators=[_DummySuccessGen(text="A")],
+            fallback_on_finish_reasons=["content_filter", "length"],
+            raise_on_exceptions=[TypeError, ValueError],
+        )
+
+        data = gen.to_dict()
+
+        assert data["init_parameters"]["fallback_on_finish_reasons"] == ["content_filter", "length"]
+        assert data["init_parameters"]["raise_on_exceptions"] == ["TypeError", "ValueError"]
+
+        restored = FallbackChatGenerator.from_dict(data)
+
+        assert restored.fallback_on_finish_reasons == ["content_filter", "length"]
+        assert restored.raise_on_exceptions == [TypeError, ValueError]
+
+    def test_to_dict_defaults(self):
+        data = FallbackChatGenerator(chat_generators=[_DummySuccessGen()]).to_dict()
+        assert data["init_parameters"]["fallback_on_finish_reasons"] is None
+        assert data["init_parameters"]["raise_on_exceptions"] is None
+
+    def test_from_dict_without_new_keys_is_backward_compatible(self):
+        data = {
+            "type": "haystack.components.generators.chat.fallback.FallbackChatGenerator",
+            "init_parameters": {"chat_generators": [_DummySuccessGen(text="old").to_dict()]},
+        }
+        restored = FallbackChatGenerator.from_dict(data)
+        assert restored.fallback_on_finish_reasons is None
+        assert restored.raise_on_exceptions is None
+        replies, meta = _unpack(restored.run([ChatMessage.from_user("hi")]))
+        assert replies[0].text == "old"
+
+    def test_pipeline_yaml_round_trip_with_options(self):
+        gen = FallbackChatGenerator(
+            chat_generators=[_DummyFinishReasonGen(), _DummySuccessGen(text="backup")],
+            fallback_on_finish_reasons=["content_filter"],
+            raise_on_exceptions=[TypeError],
+        )
+        pipe = Pipeline()
+        pipe.add_component("llm", gen)
+
+        loaded = Pipeline.loads(pipe.dumps())
+        res = loaded.run({"llm": {"messages": [ChatMessage.from_user("hi")]}})
+
+        replies, meta = _unpack(res["llm"])
+        assert replies[0].text == "backup"
+        llm = loaded.get_component("llm")
+        assert isinstance(llm, FallbackChatGenerator)
+        assert llm.raise_on_exceptions == [TypeError]
