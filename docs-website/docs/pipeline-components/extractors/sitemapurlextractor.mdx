@@ -1,0 +1,124 @@
+---
+title: "SitemapURLExtractor"
+id: sitemapurlextractor
+slug: "/sitemapurlextractor"
+description: "Extracts page URLs from XML sitemaps, so you can fetch and index a whole website."
+---
+
+# SitemapURLExtractor
+
+Extracts page URLs from XML sitemaps, so you can fetch and index a whole website.
+
+<div className="key-value-table">
+
+|  |  |
+| --- | --- |
+| **Most common position in a pipeline** | Between two [LinkContentFetchers](../fetchers/linkcontentfetcher.mdx) in an indexing pipeline: the first one fetches the sitemap, the second one fetches the pages |
+| **Mandatory run variables** | `sources`: A list of sitemaps as file paths or `ByteStream` objects |
+| **Output variables** | `urls`: A list of page URLs <br /> <br />`sitemap_urls`: A list of sitemap URLs from sitemap index files |
+| **API reference** | [Extractors](/reference/extractors-api) |
+| **GitHub link** | https://github.com/deepset-ai/haystack/blob/main/haystack/components/extractors/sitemap_url_extractor.py |
+| **Package name** | `haystack-ai` |
+
+</div>
+
+## Overview
+
+Most websites publish a sitemap, usually at `https://<website>/sitemap.xml`. It's an XML file that lists the URLs of the website's pages. `SitemapURLExtractor` reads sitemaps and returns these URLs as a list of strings, ready to be fetched by a `LinkContentFetcher`. This way you can index a whole website, such as a documentation site, starting from a single URL.
+
+The component supports both kinds of sitemaps:
+
+- A **URL set** (`<urlset>`) lists pages. Its URLs are returned in the `urls` output.
+- A **sitemap index** (`<sitemapindex>`) lists other sitemaps. Large websites often publish one instead of a single sitemap. Its URLs are returned in the `sitemap_urls` output, so you can fetch and extract them in a second step.
+
+Other things to know:
+
+- Gzip-compressed sitemaps (`sitemap.xml.gz`) are decompressed automatically.
+- Use the `url_pattern` init parameter to keep only page URLs that match a regular expression, for example `r"/docs/"`. URLs in `sitemap_urls` are never filtered.
+- Duplicate URLs are removed and the order of the sitemap is kept.
+- Only the `<loc>` of each entry is read. URLs from sitemap extensions, such as `<image:loc>`, and values that are not absolute HTTP or HTTPS URLs are ignored.
+- Sources that are empty (for example, when `LinkContentFetcher` failed to fetch a sitemap), not valid XML, not sitemaps, or larger than 50 MB (the limit of the sitemap protocol) are skipped with a warning.
+- The component doesn't make any HTTP requests itself. Fetching is done by `LinkContentFetcher`.
+
+## Usage
+
+### On its own
+
+```python
+from haystack.components.extractors import SitemapURLExtractor
+from haystack.dataclasses import ByteStream
+
+sitemap = ByteStream(
+    data=b"""<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url><loc>https://example.com/docs/intro</loc></url>
+  <url><loc>https://example.com/docs/install</loc></url>
+  <url><loc>https://example.com/blog/hello</loc></url>
+</urlset>""",
+)
+
+extractor = SitemapURLExtractor(url_pattern=r"/docs/")
+result = extractor.run(sources=[sitemap])
+print(result)
+# >> {'urls': ['https://example.com/docs/intro', 'https://example.com/docs/install'], 'sitemap_urls': []}
+```
+
+You can also pass local sitemap files:
+
+```python
+result = extractor.run(sources=["sitemap.xml", "sitemap-blog.xml.gz"])
+```
+
+### Sitemap index files
+
+When a website publishes a sitemap index, the first run returns the nested sitemaps in `sitemap_urls`. Fetch them and run the extractor again to get the pages:
+
+```python
+from haystack.components.extractors import SitemapURLExtractor
+from haystack.components.fetchers import LinkContentFetcher
+
+fetcher = LinkContentFetcher()
+extractor = SitemapURLExtractor()
+
+result = extractor.run(sources=fetcher.run(urls=["https://example.com/sitemap.xml"])["streams"])
+urls = result["urls"]
+
+if result["sitemap_urls"]:
+    nested = extractor.run(sources=fetcher.run(urls=result["sitemap_urls"])["streams"])
+    urls += nested["urls"]
+```
+
+### In a pipeline
+
+This indexing pipeline fetches a sitemap, extracts the URLs of the documentation pages, fetches these pages, converts them to documents, splits them, and writes them to a document store:
+
+```python
+from haystack import Pipeline
+from haystack.components.converters import HTMLToDocument
+from haystack.components.extractors import SitemapURLExtractor
+from haystack.components.fetchers import LinkContentFetcher
+from haystack.components.preprocessors import DocumentSplitter
+from haystack.components.writers import DocumentWriter
+from haystack.document_stores.in_memory import InMemoryDocumentStore
+
+document_store = InMemoryDocumentStore()
+
+pipeline = Pipeline()
+pipeline.add_component("sitemap_fetcher", LinkContentFetcher())
+pipeline.add_component("sitemap", SitemapURLExtractor(url_pattern=r"/docs/"))
+pipeline.add_component("page_fetcher", LinkContentFetcher())
+pipeline.add_component("converter", HTMLToDocument())
+pipeline.add_component("splitter", DocumentSplitter(split_by="word", split_length=200))
+pipeline.add_component("writer", DocumentWriter(document_store=document_store))
+
+pipeline.connect("sitemap_fetcher.streams", "sitemap.sources")
+pipeline.connect("sitemap.urls", "page_fetcher.urls")
+pipeline.connect("page_fetcher.streams", "converter.sources")
+pipeline.connect("converter.documents", "splitter.documents")
+pipeline.connect("splitter.documents", "writer.documents")
+
+pipeline.run({"sitemap_fetcher": {"urls": ["https://example.com/sitemap.xml"]}})
+print(document_store.count_documents())
+```
+
+To embed the documents for semantic search, add a document embedder between the `DocumentSplitter` and the `DocumentWriter`.
