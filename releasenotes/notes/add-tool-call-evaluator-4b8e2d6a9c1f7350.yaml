@@ -1,0 +1,10 @@
+---
+features:
+  - |
+    Added ``ToolCallEvaluator``, a new evaluator that checks whether an Agent called the expected tools with the
+    expected arguments. It reads the tool calls from the ``messages`` output of an ``Agent`` and compares them with
+    ground truth tool calls, without using an LLM.
+    ``match_mode`` sets how the calls must match: ``"strict"`` (same order), ``"unordered"`` (any order, the default),
+    ``"superset"`` (extra calls allowed) or ``"subset"`` (missing calls allowed).
+    ``arguments_match`` sets how the arguments are compared: ``"exact"`` (the default), ``"subset"`` (extra arguments
+    allowed) or ``"ignore"`` (tool name only).
