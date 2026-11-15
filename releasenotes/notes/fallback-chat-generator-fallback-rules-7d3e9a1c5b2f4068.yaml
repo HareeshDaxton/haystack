@@ -1,0 +1,12 @@
+---
+enhancements:
+  - |
+    ``FallbackChatGenerator`` has two new optional init parameters. ``fallback_on_finish_reasons`` (for example
+    ``["content_filter"]``) also treats a returned reply as a failed attempt when every reply of a chat generator
+    has one of the listed finish reasons, so a reply blocked by a provider's safety filter falls back to the next
+    chat generator. If no chat generator returns an accepted reply, the first rejected result is returned.
+    ``raise_on_exceptions`` (for example ``[TypeError, ValueError]``) re-raises the listed exception types
+    immediately instead of falling back, so programming errors are not hidden by the fallback. The output ``meta``
+    gains a ``failure_reasons`` list aligned with ``failed_chat_generators``, and the ``RuntimeError`` raised when
+    all chat generators fail now chains the last underlying exception as its ``__cause__``. Defaults keep the
+    previous behavior.
