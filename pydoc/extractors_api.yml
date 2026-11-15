@@ -1,7 +1,7 @@
 loaders:
   - search_path: [../haystack/components/extractors]
     modules: ["llm_metadata_extractor", "image/llm_document_content_extractor",
-      "regex_text_extractor"]
+      "regex_text_extractor", "sitemap_url_extractor"]
 processors:
   - type: filter
     documented_only: true
