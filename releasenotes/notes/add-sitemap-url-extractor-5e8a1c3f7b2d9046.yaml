@@ -1,0 +1,9 @@
+---
+features:
+  - |
+    Added the `SitemapURLExtractor` component. It reads XML sitemaps (`sitemap.xml`) and returns the page URLs they
+    list in the `urls` output, so you can index a whole website: fetch the sitemap with a `LinkContentFetcher`,
+    extract its URLs, then fetch the pages with a second `LinkContentFetcher`.
+    Sitemap index files are supported too: the sitemaps they list are returned in the `sitemap_urls` output.
+    Gzip-compressed sitemaps are decompressed automatically, and the optional `url_pattern` parameter keeps only
+    the page URLs that match a regular expression. The component doesn't make HTTP requests itself.
