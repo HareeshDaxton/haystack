@@ -152,6 +152,53 @@ Tool(
 )
 ```
 
+### Parameter descriptions from docstrings
+
+By default, the whole docstring of the function becomes the Tool's description, and parameters only get a description from `Annotated`.
+If you already document parameters in the docstring, pass `parse_docstring=True` to `@tool` or `create_tool_from_function`.
+The parameter descriptions are then added to the JSON schema, and only the summary and the long description (without the parameters, returns, and raises sections) become the Tool's description.
+reST/Sphinx (`:param city:`), Google (`Args:`), and NumPy (`Parameters`) docstring styles are supported.
+
+```python
+from haystack.tools import tool
+
+
+@tool(parse_docstring=True)
+def get_weather(city: str, unit: str = "Celsius") -> str:
+    """
+    Get the current weather for a location.
+
+    :param city: The city for which to get the weather.
+    :param unit: The unit for the temperature, "Celsius" or "Fahrenheit".
+    """
+    return f"Weather report for {city}: 20 {unit}, sunny"
+
+
+print(get_weather.tool_spec)
+```
+
+```
+{
+    'name': 'get_weather',
+    'description': 'Get the current weather for a location.',
+    'parameters': {
+        'properties': {
+            'city': {'type': 'string', 'description': 'The city for which to get the weather.'},
+            'unit': {
+                'default': 'Celsius',
+                'type': 'string',
+                'description': 'The unit for the temperature, "Celsius" or "Fahrenheit".',
+            },
+        },
+        'required': ['city'],
+        'type': 'object',
+    },
+}
+```
+
+A description from `Annotated` takes precedence over the docstring, and an explicit `description` takes precedence over the parsed one.
+Parameters that are hidden from the Language Model, such as those in `inputs_from_state`, are skipped. If the docstring documents a parameter that the function doesn't have, a warning is logged.
+
 ### Manual Initialization
 
 Use this approach when you need full control over the JSON schema — for example, when the function signature alone isn’t enough to express the parameter constraints.
