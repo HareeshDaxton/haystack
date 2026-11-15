@@ -10,6 +10,7 @@ from typing import Annotated, Any, Literal
 
 import jsonschema
 import pytest
+from docstring_parser import ParseError
 from pydantic import BaseModel, Field
 
 from haystack.components.agents.state import State
@@ -737,3 +738,328 @@ class TestToolDecoratorExport:
         env = {**os.environ, "PYTHON_LAZY_IMPORTS": lazy_imports_mode}
         result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=False, env=env)
         assert result.returncode == 0, result.stderr
+
+
+@tool(parse_docstring=True)
+def weather_tool_with_parsed_docstring(city: str, unit: str = "celsius") -> str:
+    """
+    Get the current weather for a city.
+
+    :param city: The city to get the weather for.
+    :param unit: The temperature unit.
+    """
+    return f"Weather report for {city}: 20 {unit}, sunny"
+
+
+class TestParseDocstring:
+    def test_default_keeps_whole_docstring_and_adds_no_descriptions(self):
+        def get_weather(city: str) -> str:
+            """
+            Get the current weather.
+
+            :param city: The city to get the weather for.
+            """
+            return city
+
+        tool_obj = create_tool_from_function(get_weather)
+
+        assert ":param city:" in tool_obj.description
+        assert tool_obj.parameters == {
+            "type": "object",
+            "properties": {"city": {"type": "string"}},
+            "required": ["city"],
+        }
+
+    def test_rest_style(self):
+        def get_weather(city: str, unit: str = "celsius") -> str:
+            """
+            Get the current weather for a city.
+
+            Use it only for current conditions, not forecasts.
+
+            :param city: The city to get the weather for.
+            :param unit: The temperature unit.
+            :returns: A short weather report.
+            :raises ValueError: If the city is unknown.
+            """
+            return city
+
+        tool_obj = create_tool_from_function(get_weather, parse_docstring=True)
+
+        assert tool_obj.description == (
+            "Get the current weather for a city.\n\nUse it only for current conditions, not forecasts."
+        )
+        assert tool_obj.parameters == {
+            "type": "object",
+            "properties": {
+                "city": {"type": "string", "description": "The city to get the weather for."},
+                "unit": {"type": "string", "description": "The temperature unit.", "default": "celsius"},
+            },
+            "required": ["city"],
+        }
+
+    def test_google_style(self):
+        def search_flights(origin: str, destination: str, max_stops: int = 1) -> list[str]:
+            """Search flights between two airports.
+
+            Args:
+                origin (str): IATA code of the departure airport.
+                destination: IATA code of the arrival airport.
+                max_stops: Maximum number of stops.
+
+            Returns:
+                A list of flight numbers.
+            """
+            return []
+
+        tool_obj = create_tool_from_function(search_flights, parse_docstring=True)
+
+        assert tool_obj.description == "Search flights between two airports."
+        properties = tool_obj.parameters["properties"]
+        assert properties["origin"]["description"] == "IATA code of the departure airport."
+        assert properties["destination"]["description"] == "IATA code of the arrival airport."
+        assert properties["max_stops"]["description"] == "Maximum number of stops."
+
+    def test_numpy_style(self):
+        def convert(amount: float, currency: str) -> float:
+            """
+            Convert an amount to EUR.
+
+            Parameters
+            ----------
+            amount : float
+                The amount of money.
+            currency : str
+                ISO 4217 currency code.
+            """
+            return amount
+
+        tool_obj = create_tool_from_function(convert, parse_docstring=True)
+
+        assert tool_obj.description == "Convert an amount to EUR."
+        properties = tool_obj.parameters["properties"]
+        assert properties["amount"]["description"] == "The amount of money."
+        assert properties["currency"]["description"] == "ISO 4217 currency code."
+
+    def test_annotated_description_takes_precedence(self):
+        def book(city: Annotated[str, "City from Annotated"], nights: int) -> str:
+            """
+            Book a hotel.
+
+            :param city: City from the docstring.
+            :param nights: Number of nights.
+            """
+            return city
+
+        tool_obj = create_tool_from_function(book, parse_docstring=True)
+
+        assert tool_obj.parameters["properties"]["city"]["description"] == "City from Annotated"
+        assert tool_obj.parameters["properties"]["nights"]["description"] == "Number of nights."
+
+    def test_explicit_description_takes_precedence(self):
+        def get_weather(city: str) -> str:
+            """
+            Get the current weather.
+
+            :param city: The city to get the weather for.
+            """
+            return city
+
+        tool_obj = create_tool_from_function(get_weather, description="Weather now.", parse_docstring=True)
+
+        assert tool_obj.description == "Weather now."
+        assert tool_obj.parameters["properties"]["city"]["description"] == "The city to get the weather for."
+
+    def test_explicit_empty_description_is_kept(self):
+        def get_weather(city: str) -> str:
+            """
+            Get the current weather.
+
+            :param city: The city to get the weather for.
+            """
+            return city
+
+        tool_obj = create_tool_from_function(get_weather, description="", parse_docstring=True)
+
+        assert tool_obj.description == ""
+        assert tool_obj.parameters["properties"]["city"]["description"] == "The city to get the weather for."
+
+    def test_hidden_parameters_are_skipped_without_warning(self, caplog):
+        def lookup_order(
+            order_id: str,
+            user_id: str,
+            state: State,
+            callback: Callable[[str], None] | None = None,
+            _trace_id: str = "",
+            *args: Any,
+            **kwargs: Any,
+        ) -> str:
+            """
+            Look up an order.
+
+            :param order_id: The order number.
+            :param user_id: Comes from the agent state.
+            :param state: The agent state.
+            :param callback: A callback.
+            :param _trace_id: Internal trace id.
+            :param *args: Extra positional arguments.
+            :param **kwargs: Extra keyword arguments.
+            """
+            return order_id
+
+        tool_obj = create_tool_from_function(lookup_order, inputs_from_state={"user": "user_id"}, parse_docstring=True)
+
+        assert tool_obj.parameters == {
+            "type": "object",
+            "properties": {"order_id": {"type": "string", "description": "The order number."}},
+            "required": ["order_id"],
+        }
+        assert "docstring documents" not in caplog.text
+
+    def test_google_style_variadic_parameters_are_skipped_without_warning(self, caplog):
+        def run(query: str, *args: Any, **kwargs: Any) -> str:
+            """
+            Run a query.
+
+            Args:
+                query: The query.
+                *args: Extra positional arguments.
+                **kwargs: Extra keyword arguments.
+            """
+            return query
+
+        tool_obj = create_tool_from_function(run, parse_docstring=True)
+
+        assert list(tool_obj.parameters["properties"]) == ["query"]
+        assert "docstring documents" not in caplog.text
+
+    def test_unknown_documented_parameter_logs_warning(self, caplog):
+        def book(nights: int) -> str:
+            """
+            Book a hotel.
+
+            :param night: Typo in the parameter name.
+            """
+            return str(nights)
+
+        tool_obj = create_tool_from_function(book, parse_docstring=True)
+
+        assert "docstring documents a parameter 'night'" in caplog.text
+        assert "description" not in tool_obj.parameters["properties"]["nights"]
+
+    def test_parameter_without_description_gets_no_description(self):
+        def book(city: str, nights: int) -> str:
+            """
+            Book a hotel.
+
+            :param city:
+            :param nights: Number of nights.
+            """
+            return city
+
+        tool_obj = create_tool_from_function(book, parse_docstring=True)
+
+        assert "description" not in tool_obj.parameters["properties"]["city"]
+        assert tool_obj.parameters["properties"]["nights"]["description"] == "Number of nights."
+
+    def test_multiline_parameter_description(self):
+        def book(city: str) -> str:
+            """
+            Book a hotel.
+
+            :param city: The city where the hotel is,
+                for example "Berlin".
+            """
+            return city
+
+        tool_obj = create_tool_from_function(book, parse_docstring=True)
+
+        assert tool_obj.parameters["properties"]["city"]["description"] == (
+            'The city where the hotel is,\nfor example "Berlin".'
+        )
+
+    def test_summary_without_blank_line_is_joined_with_newline(self):
+        def book(city: str) -> str:
+            """Book a hotel
+            in the given city.
+            """
+            return city
+
+        tool_obj = create_tool_from_function(book, parse_docstring=True)
+
+        assert tool_obj.description == "Book a hotel\nin the given city."
+
+    def test_no_docstring(self):
+        def book(city: str) -> str:
+            return city
+
+        tool_obj = create_tool_from_function(book, parse_docstring=True)
+
+        assert tool_obj.description == ""
+        assert tool_obj.parameters["properties"] == {"city": {"type": "string"}}
+
+    def test_docstring_with_only_parameters(self):
+        def book(city: str) -> str:
+            """
+            :param city: The city.
+            """
+            return city
+
+        tool_obj = create_tool_from_function(book, parse_docstring=True)
+
+        assert tool_obj.description == ""
+        assert tool_obj.parameters["properties"]["city"]["description"] == "The city."
+
+    def test_unparsable_docstring_falls_back_to_whole_docstring(self, monkeypatch, caplog):
+        def book(city: str) -> str:
+            """
+            Book a hotel.
+
+            :param city: The city.
+            """
+            return city
+
+        def failing_parse(_docstring: str) -> None:
+            raise ParseError("broken docstring")
+
+        monkeypatch.setattr(sys.modules["haystack.tools.from_function"], "parse", failing_parse)
+
+        tool_obj = create_tool_from_function(book, parse_docstring=True)
+
+        assert tool_obj.description == "Book a hotel.\n\n:param city: The city."
+        assert tool_obj.parameters["properties"] == {"city": {"type": "string"}}
+        assert "could not parse the docstring" in caplog.text
+
+    def test_tool_decorator_with_parse_docstring(self):
+        assert weather_tool_with_parsed_docstring.description == "Get the current weather for a city."
+        assert weather_tool_with_parsed_docstring.parameters["properties"] == {
+            "city": {"type": "string", "description": "The city to get the weather for."},
+            "unit": {"type": "string", "description": "The temperature unit.", "default": "celsius"},
+        }
+        assert (
+            weather_tool_with_parsed_docstring.invoke(city="Berlin") == "Weather report for Berlin: 20 celsius, sunny"
+        )
+
+    def test_tool_decorator_with_parse_docstring_on_async_function(self):
+        @tool(parse_docstring=True)
+        async def get_weather(city: str) -> str:
+            """
+            Get the current weather.
+
+            :param city: The city to get the weather for.
+            """
+            return city
+
+        assert get_weather.async_function is not None
+        assert get_weather.description == "Get the current weather."
+        assert get_weather.parameters["properties"]["city"]["description"] == "The city to get the weather for."
+
+    def test_serialization_round_trip_keeps_parsed_descriptions(self):
+        deserialized = Tool.from_dict(weather_tool_with_parsed_docstring.to_dict())
+
+        assert deserialized.description == weather_tool_with_parsed_docstring.description
+        assert deserialized.parameters == weather_tool_with_parsed_docstring.parameters
+
+    def test_parameters_schema_is_valid_json_schema(self):
+        jsonschema.Draft202012Validator.check_schema(weather_tool_with_parsed_docstring.parameters)
+        jsonschema.validate({"city": "Berlin"}, weather_tool_with_parsed_docstring.parameters)
