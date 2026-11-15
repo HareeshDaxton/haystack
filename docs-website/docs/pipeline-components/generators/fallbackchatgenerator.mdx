@@ -16,6 +16,7 @@ A ChatGenerator wrapper that tries multiple Chat Generators sequentially until o
 | --- | --- |
 | **Most common position in a pipeline** | After a [ChatPromptBuilder](../builders/chatpromptbuilder.mdx) |
 | **Mandatory init variables** | `chat_generators`: A non-empty list of Chat Generator components to try in order |
+| **Optional init variables** | `fallback_on_finish_reasons`: Finish reasons, such as `["content_filter"]`, that make a returned reply count as a failed attempt. Default is `None` <br /> <br />`raise_on_exceptions`: Exception types that are raised immediately instead of triggering a fallback, such as `[TypeError, ValueError]`. Default is `None` |
 | **Mandatory run variables** | `messages`: A list of [`ChatMessage`](../../concepts/data-classes/chatmessage.mdx) objects representing the chat or a plain string |
 | **Output variables** | `replies`: Generated ChatMessage instances from the first successful generator  <br /> <br />`meta`: Execution metadata including successful generator details |
 | **API reference** | [Generators](/reference/generators-api) |
@@ -66,6 +67,9 @@ print(
 print(
     f"Failed generators: {meta['failed_chat_generators']}",
 )  # List of failed Generator names
+print(
+    f"Failure reasons: {meta['failure_reasons']}",
+)  # Why each failed Generator was skipped, for example "RateLimitError: ..." or "finish_reason: content_filter"
 ```
 
 You can use this metadata to:
@@ -75,9 +79,39 @@ You can use this metadata to:
 - Set up alerts when fallbacks occur
 - Adjust Generator ordering based on success rates
 
+### Fallback Rules
+
+By default, the component falls back on any exception and accepts any returned reply. Two optional init parameters refine this:
+
+- `fallback_on_finish_reasons`: A list of finish reasons that make a returned reply count as a failed attempt. When a provider's safety filter blocks a reply, most Chat Generators don't raise an exception; they return a reply whose `meta["finish_reason"]` is `"content_filter"`. Set `fallback_on_finish_reasons=["content_filter"]` to try the next Generator in that case. The next Generator is tried only when every reply of a Generator has one of the listed finish reasons, so a result that contains at least one usable reply is kept. If no Generator returns an accepted reply, the component returns the first rejected result instead of raising, so this option never turns a returned reply into an error. Valid values are `"stop"`, `"length"`, `"tool_calls"`, `"content_filter"`, and `"tool_call_results"`.
+- `raise_on_exceptions`: A list of exception types that are raised immediately instead of triggering a fallback. All other exceptions still trigger the fallback. Use it to surface programming or configuration errors, such as `TypeError` or `ValueError`, instead of silently running on the backup Generator.
+
+```python
+from haystack.components.generators.chat import (
+    FallbackChatGenerator,
+    OpenAIChatGenerator,
+)
+from haystack.dataclasses import ChatMessage
+
+primary = OpenAIChatGenerator(model="gpt-4o")
+backup = OpenAIChatGenerator(model="gpt-4o-mini")
+
+generator = FallbackChatGenerator(
+    chat_generators=[primary, backup],
+    fallback_on_finish_reasons=["content_filter"],
+    raise_on_exceptions=[TypeError, ValueError],
+)
+
+result = generator.run(messages=[ChatMessage.from_user("Hello")])
+print(result["meta"]["failed_chat_generators"])  # e.g. ["OpenAIChatGenerator"]
+print(result["meta"]["failure_reasons"])  # e.g. ["finish_reason: content_filter"]
+```
+
+When you save a pipeline to YAML, the exception types in `raise_on_exceptions` are stored as import paths. Built-in exceptions such as `TypeError` load without extra configuration. Exception classes from third-party packages, such as `openai.RateLimitError`, require the package to be on the deserialization allowlist (for example `Pipeline.load(..., allowed_modules=["openai"])`).
+
 ### Streaming
 
-`FallbackChatGenerator` supports [streaming](guides-to-generators/choosing-the-right-generator.mdx#streaming-support) through the `streaming_callback` parameter. The callback is passed directly to the underlying Generators.
+`FallbackChatGenerator` supports [streaming](guides-to-generators/choosing-the-right-generator.mdx#streaming-support) through the `streaming_callback` parameter. The callback is passed directly to the underlying Generators. Note that when a Generator is rejected because of `fallback_on_finish_reasons`, its chunks have already been passed to the callback before the next Generator starts.
 
 ## Usage
 
@@ -219,7 +253,7 @@ print(f"Generator used: {result['llm']['meta']['successful_chat_generator_class'
 
 ## Error Handling
 
-If all Generators fail, `FallbackChatGenerator` raises a `RuntimeError` with details about which Generators failed and the last error encountered:
+If all Generators raise an exception, `FallbackChatGenerator` raises a `RuntimeError` with details about which Generators failed and the last error encountered. The last underlying exception is attached as the `__cause__` of the `RuntimeError`, so the original error type and traceback stay visible:
 
 ```python
 from haystack.components.generators.chat import (
