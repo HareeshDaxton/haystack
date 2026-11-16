@@ -328,6 +328,38 @@ How the two fields interact:
 
 [`ComponentTool`](componenttool.mdx) automatically wires an async invoker for components that define `run_async`, and [`PipelineTool`](pipelinetool.mdx) inherits this behavior — in Haystack 3.0 every `Pipeline` exposes a native `run_async`, so pipeline tools support the async path out of the box.
 
+## Sending Errors Back to the LLM
+
+When a tool raises an exception during an [`Agent`](../pipeline-components/agents-1/agent.mdx) run, the Agent either sends a generic `Failed to invoke Tool ... with parameters ...` message back to the LLM or, with `raise_on_tool_invocation_failure=True`, stops the run.
+
+Many failures are caused by the tool call itself: a wrong date format, an unknown ID, or a query that returns too many results. If you know how the LLM should fix its call, raise a `ToolRetryError` with that hint:
+
+```python
+from datetime import date
+from typing import Annotated
+
+from haystack.tools import ToolRetryError, tool
+
+
+@tool
+def book_flight(day: Annotated[str, "Flight date in the format YYYY-MM-DD"]) -> str:
+    """Book a flight for the given day."""
+    try:
+        flight_date = date.fromisoformat(day)
+    except ValueError as e:
+        raise ToolRetryError(f"'{day}' is not a valid date. Use the format YYYY-MM-DD, e.g. 2026-01-31.") from e
+    return f"Booked a flight on {flight_date}."
+```
+
+When a tool raises `ToolRetryError`:
+
+- The Agent sends exactly your message to the LLM as an error tool result, so the LLM can correct its call. The message is not wrapped and the tool arguments are not included, so values injected with `inputs_from_state` never reach the LLM.
+- The message is sent to the LLM even when `raise_on_tool_invocation_failure=True`. Other exceptions still stop the run, so you can fail fast on real errors and still let the LLM fix its own mistakes.
+- It also works when the error is raised inside the component of a [`ComponentTool`](componenttool.mdx) or the pipeline of a [`PipelineTool`](pipelinetool.mdx).
+- `max_agent_steps` still limits how many times the LLM can retry.
+
+Calling `Tool.invoke` directly still raises a `ToolInvocationError`, with the `ToolRetryError` as its `__cause__`.
+
 ## Toolset
 
 A Toolset groups multiple Tool instances into a single manageable unit.
