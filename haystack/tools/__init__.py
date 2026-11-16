@@ -33,6 +33,7 @@ from haystack.tools.tool import Tool, _check_duplicate_tool_names
 _import_structure = {
     "toolset": ["Toolset"],
     "searchable_toolset": ["SearchableToolset"],
+    "prefixed_toolset": ["PrefixedToolset"],
     "skills": ["SkillToolset"],
     "component_tool": ["ComponentTool"],
     "pipeline_tool": ["PipelineTool"],
@@ -47,6 +48,7 @@ if TYPE_CHECKING:
     from haystack.tools.component_tool import ComponentTool as ComponentTool
     from haystack.tools.from_function import tool as tool
     from haystack.tools.pipeline_tool import PipelineTool as PipelineTool
+    from haystack.tools.prefixed_toolset import PrefixedToolset as PrefixedToolset
     from haystack.tools.searchable_toolset import SearchableToolset as SearchableToolset
     from haystack.tools.serde_utils import deserialize_tools_or_toolset_inplace as deserialize_tools_or_toolset_inplace
     from haystack.tools.serde_utils import serialize_tools_or_toolset as serialize_tools_or_toolset
