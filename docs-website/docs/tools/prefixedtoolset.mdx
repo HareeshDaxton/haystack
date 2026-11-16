@@ -1,0 +1,121 @@
+---
+title: "PrefixedToolset"
+id: prefixedtoolset
+slug: "/prefixedtoolset"
+description: "Add a prefix to the names of all tools in a Toolset, so toolsets with the same tool names can be used together."
+---
+
+# PrefixedToolset
+
+Add a prefix to the names of all tools in a Toolset, so toolsets with the same tool names can be used together.
+
+<div className="key-value-table">
+
+|  |  |
+| --- | --- |
+| **Mandatory init variables** | `toolset`: The Toolset to wrap <br /> <br />`prefix`: The prefix added to every tool name |
+| **API reference**            | [PrefixedToolset](/reference/tools-api#prefixedtoolset) |
+| **GitHub link**              | https://github.com/deepset-ai/haystack/blob/main/haystack/tools/prefixed_toolset.py |
+| **Package name**             | `haystack-ai` |
+
+</div>
+
+## Overview
+
+Tool names must be unique within an [`Agent`](../pipeline-components/agents-1/agent.mdx). When you combine toolsets from different sources, for example two [MCP servers](mcptoolset.mdx) that both offer a `search` tool, the Agent raises a `ValueError` about duplicate tool names.
+
+`PrefixedToolset` wraps a [`Toolset`](toolset.mdx) and exposes each of its tools with a prefix added to the name: `search` becomes `github_search`. Prefixed names also make it clearer for the Language Model which tool belongs to which source.
+
+Only the name the Language Model sees changes:
+
+- Calls are delegated to the original tool. Tools that use their own name internally, like [`MCPTool`](mcptool.mdx), keep working: the MCP server still receives `search`.
+- Everything else stays the same, including the description, the parameters, `inputs_from_state`, `outputs_to_state`, `outputs_to_string`, and `State` parameters.
+- The wrapped Toolset is never modified.
+
+The prefix is added when the tools are listed, so toolsets that load their tools lazily, like an `MCPToolset` that connects during warm-up, work too.
+
+### Parameters
+
+- `toolset` (required): The Toolset whose tools are exposed with the prefix.
+- `prefix` (required): The prefix added to every tool name, used as is. Include a separator such as `_` if you want one. The prefix may only contain letters, digits, `_` and `-`, which are the characters LLM providers accept in tool names.
+
+:::info
+Toolsets with run-scoped state, which override `spawn()`, can't be wrapped. For example, `PrefixedToolset(SearchableToolset(...))` raises a `TypeError`, because the `search_tools` tool would report the original names. Wrap the toolsets inside the catalog instead: `SearchableToolset(catalog=[PrefixedToolset(github_toolset, prefix="github_"), ...])`.
+:::
+
+## Usage
+
+### Basic usage
+
+```python
+from typing import Annotated
+
+from haystack.tools import PrefixedToolset, Toolset, tool
+
+
+@tool
+def search(query: Annotated[str, "The search query"]) -> str:
+    """Search the issue tracker."""
+    return f"Results for {query}"
+
+
+toolset = PrefixedToolset(Toolset([search]), prefix="github_")
+
+print([t.name for t in toolset])
+# ['github_search']
+
+print(toolset[0].invoke(query="login bug"))
+# Results for login bug
+```
+
+### With an Agent and two MCP servers
+
+Both MCP servers below offer tools with the same names. With a prefix for each server, the Agent can use them together:
+
+```python
+from haystack.components.agents import Agent
+from haystack.components.generators.chat import OpenAIChatGenerator
+from haystack.dataclasses import ChatMessage
+from haystack.tools import PrefixedToolset
+from haystack_integrations.tools.mcp import MCPToolset, StreamableHttpServerInfo
+
+github_tools = MCPToolset(server_info=StreamableHttpServerInfo(url="http://localhost:8001/mcp"))
+jira_tools = MCPToolset(server_info=StreamableHttpServerInfo(url="http://localhost:8002/mcp"))
+
+agent = Agent(
+    chat_generator=OpenAIChatGenerator(),
+    tools=[
+        PrefixedToolset(github_tools, prefix="github_"),
+        PrefixedToolset(jira_tools, prefix="jira_"),
+    ],
+)
+
+# The Language Model sees tools such as `github_search` and `jira_search`.
+result = agent.run(messages=[ChatMessage.from_user("Find open issues about the login bug.")])
+print(result["last_message"].text)
+```
+
+### Selecting tools at runtime
+
+When you restrict an Agent to a subset of tools at runtime, use the prefixed names:
+
+```python
+result = agent.run(
+    messages=[ChatMessage.from_user("Find the login bug in Jira.")],
+    tools=["jira_search"],
+)
+```
+
+### Serialization
+
+`PrefixedToolset` serializes the wrapped Toolset with its own `to_dict()` together with the prefix. For an `MCPToolset`, this means the server connection settings are saved, not a fixed list of tools.
+
+```python
+from haystack.tools import PrefixedToolset
+
+data = toolset.to_dict()
+# {'type': 'haystack.tools.prefixed_toolset.PrefixedToolset',
+#  'data': {'toolset': {...}, 'prefix': 'github_'}}
+
+restored = PrefixedToolset.from_dict(data)
+```

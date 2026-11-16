@@ -762,6 +762,7 @@ export default {
         'tools/mcptool',
         'tools/mcptoolset',
         'tools/searchabletoolset',
+        'tools/prefixedtoolset',
         'tools/skilltoolset',
         {
           type: 'category',
