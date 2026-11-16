@@ -85,6 +85,8 @@ agent = Agent(
 )
 ```
 
+Tool names must be unique across all Toolsets. If two Toolsets have tools with the same name, wrap them in a [`PrefixedToolset`](prefixedtoolset.mdx) to add a prefix to their tool names, for example `PrefixedToolset(another_toolset, prefix="other_")`.
+
 ### Run-Scoped Copies and Tool Selection
 
 An [`Agent`](../pipeline-components/agents-1/agent.mdx) run never modifies your configured `Toolset`. A `Toolset` with per-run state, such as a [`SearchableToolset`](searchabletoolset.mdx), is copied for each run through its `spawn()` method, so concurrent runs cannot leak state (like discovered tools) into each other. A plain `Toolset` has no per-run state and is shared as is; just avoid adding or removing tools while runs are in progress.
