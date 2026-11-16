@@ -1,0 +1,8 @@
+---
+features:
+  - |
+    Added `ToolRetryError` to `haystack.tools`. Raise it inside a tool to send a clear error message back to the LLM,
+    so it can fix its tool call. The `Agent` sends the message as it is, without the "Failed to invoke Tool" wrapper
+    and without the tool arguments, so values injected with `inputs_from_state` are not exposed to the LLM.
+    The message is sent to the LLM even when `raise_on_tool_invocation_failure=True`; other exceptions keep their
+    current behavior.
