@@ -1,0 +1,22 @@
+---
+features:
+  - |
+    Added ``PrefixedToolset`` to ``haystack.tools``. It wraps a ``Toolset`` and exposes each of its tools with a
+    prefix added to the name, so toolsets with the same tool names, for example two MCP servers that both offer a
+    ``search`` tool, can be used together in an ``Agent``. Calls are delegated to the original tool, so tools that
+    use their own name internally, like ``MCPTool``, keep working, and the wrapped ``Toolset`` is never modified.
+    Lazily loaded toolsets, ``Agent.run(tools=[...])`` selection by prefixed name, and serialization are supported.
+
+    .. code:: python
+
+        from haystack.components.agents import Agent
+        from haystack.tools import PrefixedToolset
+
+        agent = Agent(
+            chat_generator=chat_generator,
+            tools=[
+                PrefixedToolset(github_toolset, prefix="github_"),
+                PrefixedToolset(jira_toolset, prefix="jira_"),
+            ],
+        )
+        # The Language Model sees tools such as `github_search` and `jira_search`.
