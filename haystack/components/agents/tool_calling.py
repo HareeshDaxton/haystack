@@ -16,7 +16,7 @@ from haystack.core.type_utils import _resolve_parameter_types
 from haystack.dataclasses import ChatMessage, ToolCall
 from haystack.dataclasses.streaming_chunk import StreamingCallbackT, StreamingChunk, _invoke_streaming_callback
 from haystack.tools import ComponentTool, Tool, ToolsType, _check_duplicate_tool_names, flatten_tools_or_toolsets
-from haystack.tools.errors import ToolInvocationError
+from haystack.tools.errors import ToolInvocationError, ToolRetryError
 from haystack.tools.parameters_schema_utils import _is_state_annotation
 from haystack.tools.tool import _is_single_output_config
 from haystack.tracing.utils import _serializable_value
@@ -507,6 +507,26 @@ def _schedule_tool_calls(tool_calls: list[ToolCall], tools: list[Tool]) -> list[
     return batches
 
 
+def _find_tool_retry_error(error: BaseException) -> ToolRetryError | None:
+    """
+    Find a `ToolRetryError` in the `__cause__` chain of an exception.
+
+    `Tool.invoke` wraps the error raised by a tool in a `ToolInvocationError`, and tools such as `PipelineTool` can add
+    more wrappers, so the `ToolRetryError` raised by the tool is usually not the outermost exception.
+
+    :param error: The exception to inspect.
+    :returns: The first `ToolRetryError` found in the chain, or `None` if there is none.
+    """
+    current: BaseException | None = error
+    seen: set[int] = set()
+    while current is not None and id(current) not in seen:
+        if isinstance(current, ToolRetryError):
+            return current
+        seen.add(id(current))
+        current = current.__cause__
+    return None
+
+
 def _finalize_tool_result(
     outcome: ToolInvocationError | tuple[Any, ChatMessage],
     tool_call: ToolCall,
@@ -518,11 +538,21 @@ def _finalize_tool_result(
     """
     Merge a single tool invocation outcome into State and return its tool-result ChatMessage.
 
-    On a `ToolInvocationError`, either re-raise (when `raise_on_failure`) or return an error message. Otherwise
-    `outcome` is the raw result and the message built inside the tool span: merge the result into State and return
-    the message.
+    On a `ToolInvocationError` caused by a `ToolRetryError`, always return the `ToolRetryError` message as an error
+    message, even when `raise_on_failure` is True. On any other `ToolInvocationError`, either re-raise (when
+    `raise_on_failure`) or return an error message. Otherwise `outcome` is the raw result and the message built inside
+    the tool span: merge the result into State and return the message.
     """
     if isinstance(outcome, ToolInvocationError):
+        retry_error = _find_tool_retry_error(outcome)
+        if retry_error is not None:
+            # The tool asked the LLM to fix its call: send only the tool's message, even if `raise_on_failure` is True
+            logger.warning(
+                "Tool '{tool_name}' raised a ToolRetryError, sending its message to the LLM: {retry_message}",
+                tool_name=tool.name,
+                retry_message=retry_error.message,
+            )
+            return ChatMessage.from_tool(tool_result=retry_error.message, origin=tool_call, error=True)
         if raise_on_failure:
             raise outcome
         logger.error("{error_exception}", error_exception=outcome)

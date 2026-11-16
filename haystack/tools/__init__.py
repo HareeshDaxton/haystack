@@ -40,11 +40,13 @@ _import_structure = {
     "serde_utils": ["deserialize_tools_or_toolset_inplace", "serialize_tools_or_toolset"],
     "utils": ["flatten_tools_or_toolsets", "warm_up_tools", "warm_up_tools_async", "close_tools", "close_tools_async"],
     "tool_types": ["ToolsType"],
+    "errors": ["ToolRetryError"],
 }
 
 if TYPE_CHECKING:
     from haystack.tools.agent_tool import AgentTool as AgentTool
     from haystack.tools.component_tool import ComponentTool as ComponentTool
+    from haystack.tools.errors import ToolRetryError as ToolRetryError
     from haystack.tools.from_function import tool as tool
     from haystack.tools.pipeline_tool import PipelineTool as PipelineTool
     from haystack.tools.searchable_toolset import SearchableToolset as SearchableToolset
